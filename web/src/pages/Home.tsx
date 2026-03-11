@@ -48,8 +48,8 @@ type BudgetByCategoryItem = {
 };
 
 const PIE_COLORS = [
-  '#2196F3', '#E91E63', '#795548', '#9E9E9E', '#FF9800', '#4CAF50', '#607D8B',
-  '#00BCD4', '#FF5722', '#3F51B5', '#009688', '#8BC34A', '#03A9F4', '#CDDC39',
+  '#0d9b9e', '#0b8588', '#2196F3', '#E91E63', '#795548', '#9E9E9E', '#FF9800', '#4CAF50',
+  '#607D8B', '#00BCD4', '#FF5722', '#3F51B5', '#009688', '#8BC34A', '#03A9F4', '#CDDC39',
 ];
 
 function monthRange(month: string): [string, string] {
@@ -58,6 +58,36 @@ function monthRange(month: string): [string, string] {
   const lastDay = new Date(y, m, 0).getDate();
   const end = `${y}-${String(m).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
   return [start, end];
+}
+
+/** Custom pie label placed further from the pie so label lines are longer */
+function PieLabelWithLongLine(props: {
+  cx?: number;
+  cy?: number;
+  midAngle?: number;
+  outerRadius?: number;
+  name?: string;
+  percent?: number;
+}) {
+  const { cx = 0, cy = 0, midAngle = 0, outerRadius = 100, name = '', percent = 0 } = props;
+  const rad = (-midAngle * Math.PI) / 180;
+  const labelRadius = outerRadius + 78;
+  const x = cx + labelRadius * Math.cos(rad);
+  const y = cy + labelRadius * Math.sin(rad);
+  const pctText = (percent * 100).toFixed(0);
+  const labelText = percent >= 0.02 ? `${name} ${pctText}%` : `${pctText}%`;
+  return (
+    <text
+      x={x}
+      y={y}
+      fill="var(--mezan-text)"
+      textAnchor={x >= cx ? 'start' : 'end'}
+      dominantBaseline="central"
+      fontSize={percent >= 0.02 ? 12 : 11}
+    >
+      {labelText}
+    </text>
+  );
 }
 
 function EditTransactionModal({
@@ -225,6 +255,9 @@ export default function Home() {
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [refreshCounter, setRefreshCounter] = useState(0);
+  type SummarySortKey = 'category_name' | 'budget' | 'actual' | 'difference';
+  const [summarySortKey, setSummarySortKey] = useState<SummarySortKey | null>(null);
+  const [summarySortDir, setSummarySortDir] = useState<'asc' | 'desc'>('asc');
 
   const [from, to] = useAllTime ? ['2000-01-01', '2030-12-31'] : useDateRange ? [dateFrom, dateTo] : monthRange(month);
 
@@ -278,113 +311,180 @@ export default function Home() {
     actual: row.actual,
   }));
 
+  const totalSpent = budgetByCategory?.total_actual ?? 0;
+  const totalBudget = budgetByCategory?.total_budget ?? 0;
+  const totalRemaining = totalBudget - totalSpent;
+  const exceedsBudget = totalBudget > 0 && totalSpent > totalBudget;
+
+  const sortedSummaryItems = (() => {
+    const items = budgetByCategory?.items ?? [];
+    if (!summarySortKey) return items;
+    const mult = summarySortDir === 'asc' ? 1 : -1;
+    return [...items].sort((a, b) => {
+      let va: string | number = a[summarySortKey];
+      let vb: string | number = b[summarySortKey];
+      if (typeof va === 'string' && typeof vb === 'string') return mult * va.localeCompare(vb);
+      return mult * ((va as number) - (vb as number));
+    });
+  })();
+
+  function handleSummarySort(key: SummarySortKey) {
+    if (summarySortKey === key) {
+      setSummarySortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSummarySortKey(key);
+      setSummarySortDir('asc');
+    }
+  }
+
   if (loading) return <div className="loading">Loading…</div>;
 
   return (
     <>
       <h1 className="page-title">Home</h1>
-      <p className="page-subtitle">Monthly budget dashboard</p>
+      <p className="page-subtitle">Your spending this month</p>
 
-      <div className="card" style={{ marginBottom: '1rem' }}>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1rem', alignItems: 'flex-end' }}>
-          <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
-            <input
-              type="checkbox"
-              checked={useAllTime}
-              onChange={(e) => {
-                setUseAllTime(e.target.checked);
-                if (e.target.checked) setUseDateRange(false);
-              }}
-            />
-            <span>All time</span>
-          </label>
-          {!useAllTime && (
-            <>
-              <div>
-                <label className="label">Month</label>
-                <input
-                  type="month"
-                  className="input"
-                  value={month}
-                  onChange={(e) => setMonth(e.target.value)}
-                  style={{ maxWidth: 160 }}
-                />
-              </div>
-              <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
-                <input
-                  type="checkbox"
-                  checked={useDateRange}
-                  onChange={(e) => {
-                    const on = e.target.checked;
-                    if (on) {
-                      const [f, t] = monthRange(month);
-                      setDateFrom(f);
-                      setDateTo(t);
-                    }
-                    setUseDateRange(on);
-                  }}
-                />
-                <span>Custom date range</span>
-              </label>
-            </>
+      {/* Summary cards */}
+      <div className="home-summary-cards">
+        <div className="home-summary-card">
+          <span className="home-summary-card-label">Total spent</span>
+          <span
+            className="home-summary-card-value"
+            style={{ color: exceedsBudget ? 'var(--mezan-danger)' : 'var(--mezan-accent)' }}
+          >
+            EGP {totalSpent.toFixed(2)}
+          </span>
+        </div>
+        <div className="home-summary-card">
+          <span className="home-summary-card-label">Budget remaining</span>
+          <span
+            className="home-summary-card-value"
+            style={{ color: totalRemaining >= 0 ? 'var(--mezan-success)' : 'var(--mezan-danger)' }}
+          >
+            EGP {totalRemaining.toFixed(2)}
+          </span>
+        </div>
+        <div className="home-summary-card">
+          <span className="home-summary-card-label">Transactions</span>
+          <span className="home-summary-card-value">{transactions.length}</span>
+        </div>
+      </div>
+
+      {/* Time range filter */}
+      <div className="card home-timerange">
+        <div className="home-timerange-header">
+          <h2 className="home-timerange-title">Time range</h2>
+          <p className="home-timerange-desc">View transactions and spending for a specific period.</p>
+        </div>
+        <div className="home-timerange-segments" role="tablist" aria-label="Period type">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={!useAllTime && !useDateRange}
+            className={`home-timerange-segment ${!useAllTime && !useDateRange ? 'home-timerange-segment--active' : ''}`}
+            onClick={() => {
+              setUseAllTime(false);
+              setUseDateRange(false);
+            }}
+          >
+            This month
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={!useAllTime && useDateRange}
+            className={`home-timerange-segment ${!useAllTime && useDateRange ? 'home-timerange-segment--active' : ''}`}
+            onClick={() => {
+              setUseAllTime(false);
+              const [f, t] = monthRange(month);
+              setDateFrom(f);
+              setDateTo(t);
+              setUseDateRange(true);
+            }}
+          >
+            Custom range
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={useAllTime}
+            className={`home-timerange-segment ${useAllTime ? 'home-timerange-segment--active' : ''}`}
+            onClick={() => {
+              setUseAllTime(true);
+              setUseDateRange(false);
+            }}
+          >
+            All time
+          </button>
+        </div>
+        <div className="home-timerange-panel">
+          {!useAllTime && !useDateRange && (
+            <div className="home-timerange-panel-inner">
+              <label className="home-timerange-label">Month</label>
+              <input
+                type="month"
+                className="input home-timerange-month"
+                value={month}
+                onChange={(e) => setMonth(e.target.value)}
+                aria-label="Select month"
+              />
+            </div>
           )}
           {!useAllTime && useDateRange && (
-            <>
-              <div>
-                <label className="label">From</label>
+            <div className="home-timerange-panel-inner home-timerange-daterange">
+              <div className="home-timerange-datefield">
+                <label className="home-timerange-label">From</label>
                 <input
                   type="date"
-                  className="input"
+                  className="input home-timerange-date"
                   value={dateFrom}
                   onChange={(e) => setDateFrom(e.target.value)}
-                  style={{ maxWidth: 140 }}
+                  aria-label="Start date"
                 />
               </div>
-              <div>
-                <label className="label">To</label>
+              <span className="home-timerange-sep" aria-hidden>to</span>
+              <div className="home-timerange-datefield">
+                <label className="home-timerange-label">To</label>
                 <input
                   type="date"
-                  className="input"
+                  className="input home-timerange-date"
                   value={dateTo}
                   onChange={(e) => setDateTo(e.target.value)}
-                  style={{ maxWidth: 140 }}
+                  aria-label="End date"
                 />
               </div>
-            </>
+            </div>
+          )}
+          {useAllTime && (
+            <p className="home-timerange-hint">
+              All transactions are shown. Budget progress below uses the current month.
+            </p>
           )}
         </div>
-        {useAllTime && (
-          <p style={{ margin: '0.5rem 0 0', fontSize: '0.9rem', color: '#666' }}>
-            Showing all transactions and spending. Budget goals below use the current month.
-          </p>
-        )}
-        {!useAllTime && useDateRange && (
-          <p style={{ margin: '0.5rem 0 0', fontSize: '0.9rem', color: '#666' }}>
-            Transactions and summary use this range. Budget goals use the month above.
-          </p>
-        )}
       </div>
 
       {error && <p className="error">{error}</p>}
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1.5rem' }}>
-        <div className="card" style={{ minHeight: 280 }}>
-          <h2 style={{ fontSize: '0.95rem', margin: '0 0 0.5rem 0', fontWeight: 600 }}>Actual Summary</h2>
+      {/* Pie chart – full width row */}
+      <div className="home-chart-row">
+        <div className="card home-chart-card home-chart-card--pie">
+          <h2 className="home-card-title">Spending by category</h2>
           {pieData.length === 0 ? (
-            <p style={{ margin: 0, color: '#666', fontSize: '0.9rem' }}>No spending this month.</p>
+            <p className="home-chart-empty">No spending this month.</p>
           ) : (
-            <ResponsiveContainer width="100%" height={240}>
+            <ResponsiveContainer width="100%" height={520}>
               <PieChart>
                 <Pie
                   data={pieData}
                   cx="50%"
                   cy="50%"
-                  innerRadius={50}
-                  outerRadius={85}
+                  innerRadius={80}
+                  outerRadius={140}
                   paddingAngle={2}
                   dataKey="value"
                   nameKey="name"
-                  label={({ name, percent }) => (percent >= 0.03 ? `${name} ${(percent * 100).toFixed(0)}%` : '')}
+                  label={<PieLabelWithLongLine />}
+                  labelLine={{ stroke: 'var(--mezan-text-muted)', strokeWidth: 1 }}
                 >
                   {pieData.map((_, i) => (
                     <Cell key={i} fill={pieData[i].color} />
@@ -395,118 +495,168 @@ export default function Home() {
             </ResponsiveContainer>
           )}
         </div>
+      </div>
 
-        <div className="card" style={{ minHeight: 280 }}>
-          <h2 style={{ fontSize: '0.95rem', margin: '0 0 0.5rem 0', fontWeight: 600 }}>Budget vs. Actual</h2>
+      {/* Bar chart – full width row */}
+      <div className="home-chart-row">
+        <div className="card home-chart-card home-chart-card--bar">
+          <h2 className="home-card-title">Budget vs. Actual</h2>
           {barData.length === 0 ? (
-            <p style={{ margin: 0, color: '#666', fontSize: '0.9rem' }}>No categories or data.</p>
+            <p className="home-chart-empty">No categories or data.</p>
           ) : (
-            <ResponsiveContainer width="100%" height={240}>
+            <ResponsiveContainer width="100%" height={320}>
               <BarChart data={barData} margin={{ top: 8, right: 8, left: 8, bottom: 60 }}>
-                <XAxis dataKey="name" tick={{ fontSize: 10 }} angle={-35} textAnchor="end" height={60} />
-                <YAxis tick={{ fontSize: 10 }} tickFormatter={(v) => `EGP ${(v / 1000).toFixed(0)}k`} />
+                <XAxis dataKey="name" tick={{ fontSize: 11 }} angle={-35} textAnchor="end" height={60} />
+                <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => `EGP ${(v / 1000).toFixed(0)}k`} />
                 <Tooltip
                   formatter={(v: number) => [`EGP ${v.toFixed(2)}`, '']}
                   labelFormatter={(_, payload) => payload[0]?.payload?.fullName ?? ''}
                 />
                 <Legend />
-                <Bar dataKey="budget" name="Budget" fill="#2196F3" radius={[2, 2, 0, 0]} />
-                <Bar dataKey="actual" name="Actual" fill="#4CAF50" radius={[2, 2, 0, 0]} />
+                <Bar dataKey="budget" name="Budget" fill="var(--mezan-accent)" radius={[2, 2, 0, 0]} />
+                <Bar dataKey="actual" name="Actual" fill="var(--mezan-success)" radius={[2, 2, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           )}
         </div>
       </div>
 
-      <div className="card" style={{ overflowX: 'auto' }}>
-        <h2 style={{ fontSize: '0.95rem', margin: '0 0 0.75rem 0', fontWeight: 600 }}>Summary by Category</h2>
+      {/* Summary by Category – redesigned table */}
+      <div className="card home-summary-card-wrap">
+        <h2 className="home-card-title">Summary by Category</h2>
         {!budgetByCategory || budgetByCategory.items.length === 0 ? (
-          <p style={{ margin: 0, color: '#666', fontSize: '0.9rem' }}>
+          <p className="home-chart-empty">
             No categories. <Link to="/categories">Add categories</Link> and <Link to="/budgets">set budgets</Link>.
           </p>
         ) : (
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem' }}>
-            <thead>
-              <tr style={{ borderBottom: '2px solid #e0e0e0', textAlign: 'left' }}>
-                <th style={{ padding: '0.5rem 0.75rem 0.5rem 0' }}>Category</th>
-                <th style={{ padding: '0.5rem 0.75rem', textAlign: 'right' }}>Budget</th>
-                <th style={{ padding: '0.5rem 0.75rem', textAlign: 'right' }}>Actual</th>
-                <th style={{ padding: '0.5rem 0 0.5rem 0.75rem', textAlign: 'right' }}>Difference</th>
-              </tr>
-            </thead>
-            <tbody>
-              {budgetByCategory.items.map((row) => (
-                <tr key={row.category_id} style={{ borderBottom: '1px solid #eee' }}>
-                  <td style={{ padding: '0.5rem 0.75rem 0.5rem 0' }}>{row.category_name}</td>
-                  <td style={{ padding: '0.5rem 0.75rem', textAlign: 'right' }}>EGP {row.budget.toFixed(2)}</td>
-                  <td style={{ padding: '0.5rem 0.75rem', textAlign: 'right' }}>EGP {row.actual.toFixed(2)}</td>
-                  <td style={{ padding: '0.5rem 0 0.5rem 0.75rem', textAlign: 'right', color: row.difference >= 0 ? '#2e7d32' : '#c62828' }}>
-                    EGP {row.difference.toFixed(2)}
+          <div className="home-summary-table-wrap">
+            <table className="home-summary-table">
+              <thead>
+                <tr>
+                  <th className="home-summary-th-cat home-summary-th-sort" onClick={() => handleSummarySort('category_name')}>
+                    Category
+                    <span className="home-summary-sort-icon" aria-hidden>
+                      {summarySortKey === 'category_name' ? (summarySortDir === 'asc' ? ' ↑' : ' ↓') : ' ⇅'}
+                    </span>
+                  </th>
+                  <th className="home-summary-th-num home-summary-th-sort" onClick={() => handleSummarySort('budget')}>
+                    Budget
+                    <span className="home-summary-sort-icon" aria-hidden>
+                      {summarySortKey === 'budget' ? (summarySortDir === 'asc' ? ' ↑' : ' ↓') : ' ⇅'}
+                    </span>
+                  </th>
+                  <th className="home-summary-th-num home-summary-th-sort" onClick={() => handleSummarySort('actual')}>
+                    Actual
+                    <span className="home-summary-sort-icon" aria-hidden>
+                      {summarySortKey === 'actual' ? (summarySortDir === 'asc' ? ' ↑' : ' ↓') : ' ⇅'}
+                    </span>
+                  </th>
+                  <th className="home-summary-th-num home-summary-th-sort" onClick={() => handleSummarySort('difference')}>
+                    Difference
+                    <span className="home-summary-sort-icon" aria-hidden>
+                      {summarySortKey === 'difference' ? (summarySortDir === 'asc' ? ' ↑' : ' ↓') : ' ⇅'}
+                    </span>
+                  </th>
+                  <th className="home-summary-th-progress">Progress</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sortedSummaryItems.map((row, index) => {
+                  const budgetVal = row.budget || 0;
+                  const hasBudget = budgetVal > 0;
+                  const pctSpent = hasBudget ? Math.min(100, (row.actual / budgetVal) * 100) : 0;
+                  const pctRemaining = hasBudget ? Math.max(0, 100 - pctSpent) : 0;
+                  const over = hasBudget && row.actual > budgetVal;
+                  const overPct = over ? ((row.actual - row.budget) / budgetVal) * 100 : 0;
+                  const overflowDisplayPct = Math.min(25, overPct);
+                  const overTotal = 100 + overflowDisplayPct;
+                  const spentBarW = over ? (100 / overTotal) * 100 : pctSpent;
+                  const overflowBarW = over ? (overflowDisplayPct / overTotal) * 100 : 0;
+                  return (
+                    <tr key={row.category_id} className={index % 2 === 0 ? 'home-summary-row--alt' : ''}>
+                      <td className="home-summary-td-cat">{row.category_name}</td>
+                      <td className="home-summary-td-num home-summary-td-budget">EGP {row.budget.toFixed(2)}</td>
+                      <td className="home-summary-td-num home-summary-td-actual">EGP {row.actual.toFixed(2)}</td>
+                      <td className={`home-summary-td-num home-summary-diff ${row.difference >= 0 ? 'home-summary-diff--ok' : 'home-summary-diff--over'}`}>
+                        EGP {row.difference.toFixed(2)}
+                      </td>
+                      <td className="home-summary-td-progress">
+                        {hasBudget ? (
+                          <div className="home-summary-progress-cell">
+                            <div className="home-summary-progress-wrap" title={over ? `Over budget: EGP ${(row.actual - row.budget).toFixed(2)}` : `${pctSpent.toFixed(0)}% spent`}>
+                              <div className="home-summary-progress-bar home-summary-progress-bar--spent" style={{ width: `${spentBarW}%` }} />
+                              {!over && <div className="home-summary-progress-bar home-summary-progress-bar--remaining" style={{ width: `${pctRemaining}%` }} />}
+                              {over && <div className="home-summary-progress-bar home-summary-progress-bar--overflow" style={{ width: `${overflowBarW}%` }} />}
+                            </div>
+                            <span className="home-summary-progress-label">
+                              {over ? '0% remaining' : `${Math.round(pctRemaining)}% remaining`}
+                            </span>
+                          </div>
+                        ) : (
+                          <span className="home-summary-progress-empty">—</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+                <tr className="home-summary-total">
+                  <td className="home-summary-td-cat">Total</td>
+                  <td className="home-summary-td-num home-summary-td-budget">EGP {budgetByCategory.total_budget.toFixed(2)}</td>
+                  <td className="home-summary-td-num home-summary-td-actual">EGP {budgetByCategory.total_actual.toFixed(2)}</td>
+                  <td className={`home-summary-td-num home-summary-diff ${budgetByCategory.total_difference >= 0 ? 'home-summary-diff--ok' : 'home-summary-diff--over'}`}>
+                    EGP {budgetByCategory.total_difference.toFixed(2)}
+                  </td>
+                  <td className="home-summary-td-progress">
+                    {budgetByCategory.total_budget > 0 && (() => {
+                      const totalBudgetVal = budgetByCategory.total_budget;
+                      const totalActual = budgetByCategory.total_actual;
+                      const totalPctSpent = Math.min(100, (totalActual / totalBudgetVal) * 100);
+                      const totalPctRemaining = Math.max(0, 100 - totalPctSpent);
+                      const totalOver = totalActual > totalBudgetVal;
+                      const totalOverPct = totalOver ? ((totalActual - totalBudgetVal) / totalBudgetVal) * 100 : 0;
+                      const totalOverflowDisplay = Math.min(25, totalOverPct);
+                      const totalOverSum = 100 + totalOverflowDisplay;
+                      const totalSpentBarW = totalOver ? (100 / totalOverSum) * 100 : totalPctSpent;
+                      const totalOverflowBarW = totalOver ? (totalOverflowDisplay / totalOverSum) * 100 : 0;
+                      return (
+                        <div className="home-summary-progress-cell">
+                          <div className="home-summary-progress-wrap" title={totalOver ? `Over: EGP ${(totalActual - totalBudgetVal).toFixed(2)}` : `${totalPctSpent.toFixed(0)}% spent`}>
+                            <div className="home-summary-progress-bar home-summary-progress-bar--spent" style={{ width: `${totalSpentBarW}%` }} />
+                            {!totalOver && <div className="home-summary-progress-bar home-summary-progress-bar--remaining" style={{ width: `${totalPctRemaining}%` }} />}
+                            {totalOver && <div className="home-summary-progress-bar home-summary-progress-bar--overflow" style={{ width: `${totalOverflowBarW}%` }} />}
+                          </div>
+                          <span className="home-summary-progress-label">
+                            {totalOver ? '0% remaining' : `${Math.round(totalPctRemaining)}% remaining`}
+                          </span>
+                        </div>
+                      );
+                    })()}
                   </td>
                 </tr>
-              ))}
-              <tr style={{ borderTop: '2px solid #e0e0e0', fontWeight: 700 }}>
-                <td style={{ padding: '0.75rem 0.75rem 0.75rem 0' }}>Total</td>
-                <td style={{ padding: '0.75rem 0.75rem', textAlign: 'right' }}>EGP {budgetByCategory.total_budget.toFixed(2)}</td>
-                <td style={{ padding: '0.75rem 0.75rem', textAlign: 'right' }}>EGP {budgetByCategory.total_actual.toFixed(2)}</td>
-                <td style={{ padding: '0.75rem 0 0.75rem 0.75rem', textAlign: 'right', color: budgetByCategory.total_difference >= 0 ? '#2e7d32' : '#c62828' }}>
-                  EGP {budgetByCategory.total_difference.toFixed(2)}
-                </td>
-              </tr>
-            </tbody>
-          </table>
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
 
-      {budgetStatus.length > 0 && (
-        <div style={{ marginTop: '1.5rem' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <h2 style={{ fontSize: '1.1rem', margin: 0 }}>Budget progress</h2>
-            <Link to="/budgets">Set budgets</Link>
-          </div>
-          {budgetStatus.map((b) => (
-            <div
-              key={`${b.scope_type}-${b.scope_id || 'total'}`}
-              className="card"
-              style={{ marginTop: '0.5rem', ...(b.overspent ? { backgroundColor: 'rgba(198, 40, 40, 0.08)' } : {}) }}
-            >
-              <p style={{ margin: '0 0 0.5rem 0', fontWeight: 600 }}>
-                {b.scope_type === 'total_monthly'
-                  ? 'Total monthly'
-                  : (b.scope_type === 'category' || b.scope_type === 'sub_category') && b.scope_id
-                    ? (categoryNameById[b.scope_id] ?? b.scope_id)
-                    : `${b.scope_type}${b.scope_id ? `: ${b.scope_id}` : ''}`}
-              </p>
-              <div className="progress-wrap">
-                <div className="progress-bar" style={{ width: `${Math.min(100, (b.spent / (b.amount || 1)) * 100)}%` }} />
-              </div>
-              <p style={{ margin: '0.5rem 0 0 0', fontSize: '0.9rem', color: '#666' }}>
-                EGP {b.spent.toFixed(2)} / {b.amount.toFixed(2)}
-                {b.overspent ? ' (over)' : ''}
-              </p>
-            </div>
-          ))}
-        </div>
-      )}
-
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '1.5rem' }}>
-        <h2 style={{ fontSize: '1.1rem', margin: 0 }}>Recent transactions</h2>
-        <span style={{ display: 'flex', gap: '0.5rem' }}>
+      <div className="home-section-header">
+        <h2 className="home-section-title">Recent transactions</h2>
+        <span className="home-section-actions">
           <Link to="/transactions">View all</Link>
           <Link to="/add">Add</Link>
         </span>
       </div>
       {transactions.length === 0 ? (
         <div className="card">
-          <p style={{ margin: 0, color: '#666' }}>No transactions this month. <Link to="/add">Add one</Link> or <Link to="/sms">paste from SMS</Link>.</p>
+          <p className="home-empty-note">No transactions this month. <Link to="/add">Add one</Link> or <Link to="/sms">paste from SMS</Link>.</p>
         </div>
       ) : (
-        <ul className="list">
+        <ul className="list home-transaction-list">
           {transactions.slice(0, 5).map((t) => (
-            <li key={t.id} className="list-item" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+            <li key={t.id} className="list-item home-transaction-item">
               <span className="list-item-main" style={{ flex: 1, minWidth: 0 }}>
                 <strong>{t.merchant || t.category?.name || '—'}</strong>
-                <span style={{ fontSize: '0.9rem', color: '#666' }}>{t.date}</span>
+                <span className="home-transaction-date">{t.date}</span>
               </span>
               <span className="list-item-amount">{t.currency} {t.amount.toFixed(2)}</span>
               {deleteConfirmId === t.id ? (
@@ -553,8 +703,7 @@ export default function Home() {
                   </button>
                   <button
                     type="button"
-                    className="btn"
-                    style={{ padding: '0.2rem 0.5rem', fontSize: '0.8rem', color: '#c62828' }}
+                    className="btn home-btn-delete"
                     onClick={() => setDeleteConfirmId(t.id)}
                   >
                     Delete

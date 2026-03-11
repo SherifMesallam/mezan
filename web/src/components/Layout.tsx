@@ -48,25 +48,32 @@ export default function Layout({ onLogout }: Props) {
 
   return (
     <div className="layout">
-      <nav className="nav">
-        <Link to="/" className="nav-title">Mezan</Link>
-        <div className="nav-links">
+      <aside className="layout-sidebar">
+        <Link to="/" className="layout-sidebar-logo">
+          <span className="layout-sidebar-logo-mark">M</span>
+          Mezan
+        </Link>
+        <nav className="layout-sidebar-nav">
           {nav.map(({ to, label }) => (
             <Link
               key={to}
               to={to}
-              className={location.pathname === to ? 'nav-link active' : 'nav-link'}
+              className={`layout-sidebar-link ${location.pathname === to ? 'active' : ''}`}
             >
               {label}
             </Link>
           ))}
+        </nav>
+        <div className="layout-sidebar-footer">
           <button type="button" className="btn btn-secondary" onClick={onLogout}>
             Log out
           </button>
         </div>
-      </nav>
-      <main className={location.pathname === '/' ? 'container container--full' : 'container'}>
-        <Outlet />
+      </aside>
+      <main className="layout-main">
+        <div className={location.pathname === '/' ? 'container container--full' : 'container'}>
+          <Outlet />
+        </div>
       </main>
     </div>
   );
