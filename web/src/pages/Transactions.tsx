@@ -10,6 +10,7 @@ type Transaction = {
   id: string;
   amount: number;
   currency: string;
+  egp_value?: number | null;
   date: string;
   time: string | null;
   merchant: string | null;
@@ -49,6 +50,8 @@ function EditTransactionModal({
   setSaving: (v: boolean) => void;
 }) {
   const [amount, setAmount] = useState(String(transaction.amount));
+  const [currency, setCurrency] = useState(transaction.currency || 'EGP');
+  const [egpValue, setEgpValue] = useState(transaction.egp_value != null ? String(transaction.egp_value) : '');
   const [merchant, setMerchant] = useState(transaction.merchant || '');
   const [categoryId, setCategoryId] = useState(transaction.category_id || transaction.category?.id || '');
   const [date, setDate] = useState(transaction.date.slice(0, 10));
@@ -73,12 +76,14 @@ function EditTransactionModal({
     setSaving(true);
     onError('');
     try {
+      const egpNum = egpValue.trim() ? parseFloat(egpValue.trim()) : null;
       await api(`/v1/transactions/${transaction.id}`, {
         method: 'PATCH',
         token,
         body: {
           amount: amt,
-          currency: transaction.currency || 'EGP',
+          currency: currency || 'EGP',
+          egp_value: egpNum != null && !Number.isNaN(egpNum) ? egpNum : null,
           category_id: categoryId,
           date: date.slice(0, 10),
           time: time || null,
@@ -124,6 +129,39 @@ function EditTransactionModal({
             onChange={(e) => setAmount(e.target.value)}
             style={{ marginBottom: '0.75rem' }}
           />
+          <label className="label">Currency</label>
+          <select
+            className="input"
+            value={currency}
+            onChange={(e) => setCurrency(e.target.value)}
+            style={{ marginBottom: '0.75rem' }}
+          >
+            <option value="EGP">EGP</option>
+            <option value="USD">USD</option>
+            <option value="EUR">EUR</option>
+            <option value="GBP">GBP</option>
+            <option value="SAR">SAR</option>
+            <option value="AED">AED</option>
+            <option value="KWD">KWD</option>
+          </select>
+          {currency !== 'EGP' && (
+            <>
+              <label className="label">EGP value (optional)</label>
+              <p style={{ margin: '-0.5rem 0 0.5rem', fontSize: '0.85rem', color: '#666' }}>
+                Used in totals and budgets. Enter equivalent in EGP.
+              </p>
+              <input
+                type="number"
+                step="0.01"
+                min="0"
+                className="input"
+                value={egpValue}
+                onChange={(e) => setEgpValue(e.target.value)}
+                placeholder="e.g. 35000"
+                style={{ marginBottom: '0.75rem' }}
+              />
+            </>
+          )}
           <label className="label">Merchant</label>
           <input
             type="text"
@@ -388,7 +426,12 @@ export default function Transactions() {
                   </span>
                 </span>
                 <span className="list-item-amount">
-                  {t.currency} {t.amount.toFixed(2)}
+                  {t.amount.toFixed(2)} {t.currency}
+                  {t.currency !== 'EGP' && t.egp_value != null && (
+                    <span style={{ fontSize: '0.85em', color: '#666', marginLeft: '0.25rem' }}>
+                      (≈ {Number(t.egp_value).toLocaleString(undefined, { minimumFractionDigits: 2 })} EGP)
+                    </span>
+                  )}
                 </span>
                 {deleteConfirmId === t.id ? (
                   <span style={{ display: 'flex', gap: '0.25rem', fontSize: '0.85rem' }}>

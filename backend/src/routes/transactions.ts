@@ -3,6 +3,7 @@ import { prisma } from '../lib/prisma';
 import { normalizeDateToYYYYMMDD } from '../lib/date';
 import { authMiddleware, AuthRequest } from '../middleware/auth';
 import { recordCategoryFeedback } from '../services/learning';
+import { Decimal } from '@prisma/client/runtime/library';
 
 const VALID_DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -45,6 +46,7 @@ transactionsRouter.get('/', async (req: AuthRequest, res) => {
       id: t.id,
       amount: Number(t.amount),
       currency: t.currency,
+      egp_value: t.egpValue != null ? Number(t.egpValue) : null,
       category_id: t.categoryId,
       category: t.category,
       date: t.date,
@@ -140,6 +142,7 @@ transactionsRouter.post('/', async (req: AuthRequest, res) => {
     const {
       amount,
       currency,
+      egp_value,
       category_id,
       date,
       time,
@@ -150,6 +153,7 @@ transactionsRouter.post('/', async (req: AuthRequest, res) => {
     } = req.body as {
       amount: number;
       currency?: string;
+      egp_value?: number | null;
       category_id: string;
       date: string;
       time?: string;
@@ -184,6 +188,7 @@ transactionsRouter.post('/', async (req: AuthRequest, res) => {
         userId,
         amount: Number(amount),
         currency: cur,
+        egpValue: egp_value != null && egp_value !== '' ? new Decimal(Number(egp_value)) : null,
         categoryId: category_id,
         date: dateStr,
         time: time != null ? String(time) : null,
@@ -205,6 +210,7 @@ transactionsRouter.post('/', async (req: AuthRequest, res) => {
       id: transaction.id,
       amount: Number(transaction.amount),
       currency: transaction.currency,
+      egp_value: transaction.egpValue != null ? Number(transaction.egpValue) : null,
       category_id: transaction.categoryId,
       category: transaction.category,
       date: transaction.date,
@@ -225,7 +231,7 @@ transactionsRouter.patch('/:id', async (req: AuthRequest, res) => {
   try {
     const userId = req.user!.userId;
     const id = req.params.id;
-    const { category_id, tag_ids, date, time, amount, currency, merchant, location_tile } = req.body;
+    const { category_id, tag_ids, date, time, amount, currency, egp_value, merchant, location_tile } = req.body;
 
     const existing = await prisma.transaction.findFirst({
       where: { id, userId },
@@ -255,6 +261,7 @@ transactionsRouter.patch('/:id', async (req: AuthRequest, res) => {
     if (time !== undefined) data.time = time ? String(time) : null;
     if (amount != null) data.amount = Number(amount);
     if (currency != null) data.currency = String(currency).toUpperCase();
+    if (egp_value !== undefined) data.egpValue = egp_value != null && egp_value !== '' ? new Decimal(Number(egp_value)) : null;
     if (merchant !== undefined) data.merchant = merchant ? String(merchant) : null;
     if (location_tile !== undefined) data.locationTile = location_tile ? String(location_tile) : null;
 
@@ -295,6 +302,7 @@ transactionsRouter.patch('/:id', async (req: AuthRequest, res) => {
       id: updated.id,
       amount: Number(updated.amount),
       currency: updated.currency,
+      egp_value: updated.egpValue != null ? Number(updated.egpValue) : null,
       category_id: updated.categoryId,
       category: updated.category,
       date: updated.date,

@@ -206,6 +206,9 @@ export default function Categories() {
               <span className="list-item-main">
                 <strong>{c.name}</strong>
                 {c.parent_id && <span style={{ fontSize: '0.85rem', color: '#888' }}> Sub-category</span>}
+                <span style={{ fontSize: '0.85rem', color: '#666', marginLeft: '0.5rem' }}>
+                  ({c.transaction_count ?? 0} transaction{(c.transaction_count ?? 0) === 1 ? '' : 's'})
+                </span>
               </span>
               <span style={{ display: 'flex', gap: '0.5rem' }}>
                 <button

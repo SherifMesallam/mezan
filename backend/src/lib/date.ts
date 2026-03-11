@@ -67,8 +67,9 @@ export function normalizeDateToYYYYMMDD(value: unknown): string {
       month = n1;
       day = n2;
     } else if (n1 <= 12 && n2 <= 12) {
-      month = n1;
-      day = n2;
+      // Ambiguous: assume DD/MM (day first) for MENA/rest-of-world consistency.
+      day = n1;
+      month = n2;
     } else {
       return '';
     }
@@ -93,8 +94,9 @@ export function normalizeDateToYYYYMMDD(value: unknown): string {
       month = n1;
       day = n2;
     } else if (n1 <= 12 && n2 <= 12) {
-      month = n1;
-      day = n2;
+      // Ambiguous: assume DD/MM (day first).
+      day = n1;
+      month = n2;
     } else {
       return '';
     }
