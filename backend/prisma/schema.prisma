@@ -1,0 +1,118 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id               String    @id @default(uuid())
+  email            String    @unique
+  passwordHash     String?   @map("password_hash")
+  authProviderId   String?   @map("auth_provider_id")
+  createdAt        DateTime  @default(now()) @map("created_at")
+
+  userSettings   UserSettings?
+  categories     Category[]
+  tags           Tag[]
+  transactions   Transaction[]
+  budgets        Budget[]
+}
+
+model UserSettings {
+  id                  String    @id @default(uuid())
+  userId              String    @unique @map("user_id")
+  ingestTokenHash     String?   @map("ingest_token_hash")
+  inboundEmailLocal   String?   @map("inbound_email_local")
+  defaultCurrency     String    @default("EGP") @map("default_currency")
+  locale              String    @default("en")
+  setupCompletedAt    DateTime? @map("setup_completed_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Category {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  parentId  String?  @map("parent_id")
+  name      String
+  nameAr    String?  @map("name_ar")
+  icon      String?
+  color     String?
+  isSystem  Boolean  @default(false) @map("is_system")
+  sortOrder Int      @default(0) @map("sort_order")
+
+  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  parent     Category?   @relation("CategoryHierarchy", fields: [parentId], references: [id], onDelete: Cascade)
+  children   Category[]  @relation("CategoryHierarchy")
+  transactions Transaction[]
+}
+
+model Tag {
+  id       String   @id @default(uuid())
+  userId   String   @map("user_id")
+  name     String
+  nameAr   String?  @map("name_ar")
+  color    String?
+
+  user          User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions  TransactionTag[]
+}
+
+model Transaction {
+  id                 String   @id @default(uuid())
+  userId             String   @map("user_id")
+  amount             Decimal  @db.Decimal(14, 2)
+  currency           String   @default("EGP")
+  categoryId         String   @map("category_id")
+  date               String   // YYYY-MM-DD
+  time               String?  // HH:mm or full ISO time
+  locationTile       String?  @map("location_tile")
+  locationVenueHint  String?  @map("location_venue_hint")
+  merchant           String?
+  source             String    // manual | sms | email | bank
+  userConfirmedAt    DateTime? @map("user_confirmed_at") // set when user edits category or tags (for learning)
+  createdAt          DateTime  @default(now()) @map("created_at")
+
+  user     User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  category Category        @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  tags     TransactionTag[]
+}
+
+model TransactionTag {
+  transactionId String @map("transaction_id")
+  tagId         String @map("tag_id")
+
+  transaction Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  tag         Tag         @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([transactionId, tagId])
+}
+
+model Budget {
+  id         String  @id @default(uuid())
+  userId     String  @map("user_id")
+  scopeType  String  @map("scope_type") // total_monthly | category | sub_category | tag
+  scopeId    String? @map("scope_id")   // category_id or tag_id; null when total_monthly
+  amount     Decimal @db.Decimal(14, 2)
+  currency   String  @default("EGP")
+  month      String  // 2025-03
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, scopeType, scopeId, month])
+}
+
+// Anonymous learning: no user_id, only merchant + category name + region for LLM few-shot
+model CategorySuggestionSignal {
+  id                String   @id @default(uuid())
+  merchantNormalized String  @map("merchant_normalized") // e.g. "fawry", "starbucks"
+  categoryName      String   @map("category_name")       // e.g. "Bills", "Food"
+  region            String   @default("EG")              // e.g. "EG", "SA"
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  @@index([merchantNormalized, region])
+  @@index([categoryName, region])
+}

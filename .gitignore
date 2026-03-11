@@ -1,0 +1,27 @@
+# Env (secrets)
+.env
+backend/.env
+web/.env
+*.env.local
+
+# Dependencies
+node_modules/
+
+# Build / IDE
+dist/
+*.log
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# Prisma
+backend/prisma/migrations/*_migration_lock.toml
+
+# Web build
+web/dist/
+
+# Flutter / Dart
+mobile/.dart_tool/
+mobile/.packages
+mobile/build/
