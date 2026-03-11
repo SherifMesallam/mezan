@@ -12,6 +12,8 @@ export default function AddTransaction() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [tags, setTags] = useState<Tag[]>([]);
   const [amount, setAmount] = useState('');
+  const [currency, setCurrency] = useState('EGP');
+  const [egpValue, setEgpValue] = useState('');
   const [merchant, setMerchant] = useState('');
   const [categoryId, setCategoryId] = useState('');
   const [tagIds, setTagIds] = useState<string[]>([]);
@@ -53,12 +55,14 @@ export default function AddTransaction() {
     setError('');
     setSaving(true);
     try {
+      const egpNum = egpValue.trim() ? parseFloat(egpValue.trim()) : null;
       await api('/v1/transactions', {
         method: 'POST',
         token: token!,
         body: {
           amount: amt,
-          currency: 'EGP',
+          currency: currency || 'EGP',
+          egp_value: egpNum != null && !Number.isNaN(egpNum) ? egpNum : undefined,
           category_id: categoryId,
           date,
           time,
@@ -86,7 +90,7 @@ export default function AddTransaction() {
       <h1 className="page-title">Add transaction</h1>
       <p className="page-subtitle">Manual entry</p>
       <form onSubmit={submit} className="card">
-        <label className="label">Amount (EGP)</label>
+        <label className="label">Amount</label>
         <input
           type="number"
           step="0.01"
@@ -96,6 +100,37 @@ export default function AddTransaction() {
           onChange={(e) => setAmount(e.target.value)}
           required
         />
+        <label className="label">Currency</label>
+        <select
+          className="input"
+          value={currency}
+          onChange={(e) => setCurrency(e.target.value)}
+        >
+          <option value="EGP">EGP</option>
+          <option value="USD">USD</option>
+          <option value="EUR">EUR</option>
+          <option value="GBP">GBP</option>
+          <option value="SAR">SAR</option>
+          <option value="AED">AED</option>
+          <option value="KWD">KWD</option>
+        </select>
+        {currency !== 'EGP' && (
+          <>
+            <label className="label">EGP value (optional)</label>
+            <p className="page-subtitle" style={{ marginTop: '-0.5rem', marginBottom: '0.5rem' }}>
+              Used in totals, budgets and charts. Enter the equivalent in EGP so this transaction is counted correctly.
+            </p>
+            <input
+              type="number"
+              step="0.01"
+              min="0"
+              className="input"
+              value={egpValue}
+              onChange={(e) => setEgpValue(e.target.value)}
+              placeholder="e.g. 35000"
+            />
+          </>
+        )}
         <label className="label">Merchant (optional)</label>
         <input
           type="text"

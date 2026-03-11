@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { prisma } from '../lib/prisma';
 import { authMiddleware, AuthRequest } from '../middleware/auth';
 import { Decimal } from '@prisma/client/runtime/library';
+import { effectiveAmount } from '../lib/transaction';
 
 export const budgetsRouter = Router();
 budgetsRouter.use(authMiddleware);
@@ -211,12 +212,12 @@ async function computeSpentByScope(
     include: { tags: true, category: true },
   });
 
-  const total = transactions.reduce((sum, t) => sum + Number(t.amount), 0);
+  const total = transactions.reduce((sum, t) => sum + effectiveAmount(t), 0);
   const byCategory = new Map<string, number>();
   const byTag = new Map<string, number>();
 
   for (const t of transactions) {
-    const amt = Number(t.amount);
+    const amt = effectiveAmount(t);
     byCategory.set(t.categoryId, (byCategory.get(t.categoryId) || 0) + amt);
     for (const tt of t.tags) {
       byTag.set(tt.tagId, (byTag.get(tt.tagId) || 0) + amt);

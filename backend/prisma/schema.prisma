@@ -66,6 +66,7 @@ model Transaction {
   userId             String   @map("user_id")
   amount             Decimal  @db.Decimal(14, 2)
   currency           String   @default("EGP")
+  egpValue           Decimal? @map("egp_value")   // EGP equivalent for non-EGP; used in aggregations
   categoryId         String   @map("category_id")
   date               String   // YYYY-MM-DD
   time               String?  // HH:mm or full ISO time

@@ -12,6 +12,7 @@
     "db:migrate": "prisma migrate dev",
     "db:studio": "prisma studio",
     "scripts:fix-transaction-dates": "ts-node -r dotenv/config scripts/fix-transaction-dates.ts",
+    "scripts:fix-swapped-dates": "ts-node -r dotenv/config scripts/fix-swapped-dates.ts",
     "scripts:adjust-transaction-dates": "ts-node -r dotenv/config scripts/adjust-transaction-dates.ts",
     "scripts:reset-transactions": "ts-node -r dotenv/config scripts/reset-transactions.ts"
   },

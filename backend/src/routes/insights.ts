@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { prisma } from '../lib/prisma';
 import { authMiddleware, AuthRequest } from '../middleware/auth';
+import { effectiveAmount } from '../lib/transaction';
 
 export const insightsRouter = Router();
 insightsRouter.use(authMiddleware);
@@ -31,7 +32,7 @@ insightsRouter.get('/summary', async (req: AuthRequest, res) => {
     const groups = new Map<string, number>();
 
     for (const t of transactions) {
-      const amt = Number(t.amount);
+      const amt = effectiveAmount(t);
       let key: string;
       let label: string;
 
@@ -107,11 +108,11 @@ insightsRouter.get('/budget-status', async (req: AuthRequest, res) => {
       include: { tags: true },
     });
 
-    const totalSpent = transactions.reduce((sum, t) => sum + Number(t.amount), 0);
+    const totalSpent = transactions.reduce((sum, t) => sum + effectiveAmount(t), 0);
     const byCategory = new Map<string, number>();
     const byTag = new Map<string, number>();
     for (const t of transactions) {
-      const amt = Number(t.amount);
+      const amt = effectiveAmount(t);
       byCategory.set(t.categoryId, (byCategory.get(t.categoryId) || 0) + amt);
       for (const tt of t.tags) {
         byTag.set(tt.tagId, (byTag.get(tt.tagId) || 0) + amt);
@@ -151,8 +152,11 @@ insightsRouter.get('/budget-by-category', async (req: AuthRequest, res) => {
   try {
     const userId = req.user!.userId;
     const month = (req.query.month as string) || getCurrentCalendarMonth();
+    const rangeFrom = req.query.from as string;
+    const rangeTo = req.query.to as string;
 
-    const [start, end] = monthRangeForMonth(month);
+    const [start, end] =
+      rangeFrom && rangeTo ? [rangeFrom, rangeTo] : monthRangeForMonth(month);
 
     const [categories, budgets, transactions] = await Promise.all([
       prisma.category.findMany({
@@ -165,7 +169,7 @@ insightsRouter.get('/budget-by-category', async (req: AuthRequest, res) => {
       }),
       prisma.transaction.findMany({
         where: { userId, date: { gte: start, lte: end } },
-        select: { categoryId: true, amount: true },
+        select: { categoryId: true, amount: true, egpValue: true },
       }),
     ]);
 
@@ -178,7 +182,7 @@ insightsRouter.get('/budget-by-category', async (req: AuthRequest, res) => {
 
     const actualByCategory = new Map<string, number>();
     for (const t of transactions) {
-      const amt = Number(t.amount);
+      const amt = effectiveAmount(t);
       actualByCategory.set(t.categoryId, (actualByCategory.get(t.categoryId) || 0) + amt);
     }
 
@@ -214,6 +218,45 @@ insightsRouter.get('/budget-by-category', async (req: AuthRequest, res) => {
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'Failed to get budget by category' });
+  }
+});
+
+/** Diagnostic: list each category with its transaction count and total amount. Use to spot duplicate names or mismatched ids (e.g. Subscriptions showing 0). */
+insightsRouter.get('/category-counts', async (req: AuthRequest, res) => {
+  try {
+    const userId = req.user!.userId;
+    const [categories, transactions] = await Promise.all([
+      prisma.category.findMany({
+        where: { userId },
+        orderBy: [{ name: 'asc' }],
+        select: { id: true, name: true, parentId: true },
+      }),
+      prisma.transaction.findMany({
+        where: { userId },
+        select: { categoryId: true, amount: true, egpValue: true },
+      }),
+    ]);
+    const byCat = new Map<string, { count: number; total: number }>();
+    for (const t of transactions) {
+      const cur = byCat.get(t.categoryId) ?? { count: 0, total: 0 };
+      cur.count += 1;
+      cur.total += effectiveAmount(t);
+      byCat.set(t.categoryId, cur);
+    }
+    const items = categories.map((c) => {
+      const cur = byCat.get(c.id);
+      return {
+        id: c.id,
+        name: c.name,
+        parent_id: c.parentId,
+        transaction_count: cur?.count ?? 0,
+        total_amount: Math.round((cur?.total ?? 0) * 100) / 100,
+      };
+    });
+    res.json({ items });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Failed to get category counts' });
   }
 });
 

@@ -284,7 +284,10 @@ export default function Home() {
         total_budget: number;
         total_actual: number;
         total_difference: number;
-      }>('/v1/insights/budget-by-category', { token, query: { month } }),
+      }>('/v1/insights/budget-by-category', {
+        token,
+        query: useAllTime ? { month, from, to } : { month },
+      }),
     ])
       .then(([txRes, catRes, budgetRes, summaryRes, byCatRes]) => {
         setTransactions(txRes.transactions || []);
