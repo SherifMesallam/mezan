@@ -51,9 +51,9 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
       }
     } on ApiException catch (e) {
       if (mounted) setState(() => _error = e.message);
-    } on http.ClientException catch (e) {
+    } on http.ClientException catch (_) {
       if (mounted) {
-        setState(() => _error = 'Cannot reach server. Tap "API server URL" below and set your computer\'s address (e.g. http://192.168.1.x:3000).');
+        setState(() => _error = 'Cannot reach server. Check your connection.');
       }
     } finally {
       if (mounted) setState(() => _loading = false);
@@ -150,47 +150,8 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
                   )
                 : const Text('Continue'),
           ),
-          const SizedBox(height: 16),
-          TextButton.icon(
-            onPressed: _loading ? null : _openApiUrlDialog,
-            icon: const Icon(Icons.settings_ethernet, size: 18),
-            label: const Text('API server URL'),
-          ),
         ],
       ),
     );
-  }
-
-  Future<void> _openApiUrlDialog() async {
-    final state = context.read<AppState>();
-    final controller = TextEditingController(text: state.baseUrl ?? state.effectiveBaseUrl);
-    if (!mounted) return;
-    final url = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('API server URL'),
-        content: TextField(
-          controller: controller,
-          keyboardType: TextInputType.url,
-          decoration: const InputDecoration(
-            hintText: 'http://192.168.1.x:3000',
-            border: OutlineInputBorder(),
-          ),
-          onSubmitted: (v) => Navigator.pop(ctx, v.trim().isEmpty ? null : v.trim()),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, controller.text.trim().isEmpty ? null : controller.text.trim()),
-            child: const Text('Save'),
-          ),
-        ],
-      ),
-    );
-    controller.dispose();
-    if (url != null && mounted) await state.setBaseUrl(url);
   }
 }

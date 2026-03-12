@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { api } from '../api';
 import { getStoredToken } from '../App';
@@ -60,6 +60,8 @@ export default function SetupWizard() {
     Record<string, { category_id: string; tag_ids: string[] }>
   >({});
   const [confirmedMerchants, setConfirmedMerchants] = useState<Set<string>>(new Set());
+  const [importing, setImporting] = useState(false);
+  const importFileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!token) return;
@@ -280,6 +282,34 @@ export default function SetupWizard() {
     }
   }
 
+  function triggerImportFile() {
+    importFileInputRef.current?.click();
+  }
+
+  async function handleSetupImportFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file || !token) return;
+    e.target.value = '';
+    setError('');
+    setImporting(true);
+    try {
+      const text = await file.text();
+      const data = JSON.parse(text) as unknown;
+      if (!data || typeof data !== 'object' || (!('version' in data) && !('user' in data) && !('transactions' in data))) {
+        setError('Invalid export file.');
+        return;
+      }
+      await api<{ ok?: boolean }>('/v1/import/data', { method: 'POST', body: data, token: token! });
+      await api('/v1/setup/complete', { method: 'POST', token: token! });
+      sessionStorage.removeItem(SETUP_STEP_KEY);
+      navigate('/');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Import failed');
+    } finally {
+      setImporting(false);
+    }
+  }
+
   function toggleExampleCategory(name: string) {
     setSelectedExampleCategories((prev) => {
       const next = new Set(prev);
@@ -325,13 +355,34 @@ export default function SetupWizard() {
       {/* Step 1: Categories & tags */}
       {step === 1 && (
         <div className="card" style={{ maxWidth: 560 }}>
+          <h2 style={{ fontSize: '1.1rem', margin: '0 0 0.5rem 0' }}>Import from backup (optional)</h2>
+          <p style={{ margin: '0 0 1rem 0', color: '#666', fontSize: '0.95rem' }}>
+            If you have a Mezan export file, import it to restore your categories, tags, budgets, and transactions. This will replace any existing data, then finish setup.
+          </p>
+          <input
+            ref={importFileInputRef}
+            type="file"
+            accept=".json,application/json"
+            style={{ display: 'none' }}
+            onChange={handleSetupImportFile}
+          />
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={triggerImportFile}
+            disabled={importing}
+            style={{ marginBottom: '1.5rem' }}
+          >
+            {importing ? 'Importing…' : 'Choose file to import'}
+          </button>
+          <hr style={{ border: 'none', borderTop: '1px solid #eee', margin: '0 0 1.5rem 0' }} />
+          <h2 style={{ fontSize: '1.1rem', margin: '0 0 0.5rem 0' }}>Or create categories (required)</h2>
           {userCategories.length > 0 && (
             <p style={{ margin: '0 0 1rem 0', padding: '0.5rem 0.75rem', background: '#E8F5E9', borderRadius: 6, fontSize: '0.9rem' }}>
               Saved: you have {userCategories.length} categor{userCategories.length === 1 ? 'y' : 'ies'}
               {userTags.length > 0 ? ` and ${userTags.length} tag${userTags.length === 1 ? '' : 's'}` : ''}. Add more below or click Next to continue.
             </p>
           )}
-          <h2 style={{ fontSize: '1.1rem', margin: '0 0 1rem 0' }}>Create categories (required)</h2>
           <p style={{ margin: '0 0 1rem 0', color: '#666', fontSize: '0.95rem' }}>
             Select example categories or add your own. You need at least one.
           </p>

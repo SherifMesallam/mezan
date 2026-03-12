@@ -12,14 +12,6 @@ class SettingsScreen extends StatelessWidget {
       appBar: AppBar(title: const Text('Settings')),
       body: ListView(
         children: [
-          Consumer<AppState>(
-            builder: (context, state, _) => ListTile(
-              title: const Text('API base URL'),
-              subtitle: Text(state.effectiveBaseUrl),
-              onTap: () => _showApiUrlDialog(context, state),
-            ),
-          ),
-          const Divider(),
           ListTile(
             title: const Text('SMS on iPhone'),
             subtitle: const Text('Get ingest token for Shortcut or Share'),
@@ -32,42 +24,6 @@ class SettingsScreen extends StatelessWidget {
               await context.read<AppState>().logout();
               if (context.mounted) Navigator.of(context).popUntil((r) => r.isFirst);
             },
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _showApiUrlDialog(BuildContext context, AppState state) {
-    final controller = TextEditingController(text: state.baseUrl ?? state.effectiveBaseUrl);
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('API base URL'),
-        content: TextField(
-          controller: controller,
-          decoration: const InputDecoration(
-            hintText: 'http://localhost:3000',
-            border: OutlineInputBorder(),
-          ),
-          autofocus: true,
-          keyboardType: TextInputType.url,
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () async {
-              final url = controller.text.trim();
-              await state.setBaseUrl(url.isEmpty ? null : url);
-              if (context.mounted) Navigator.pop(context);
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('API URL saved')),
-              );
-            },
-            child: const Text('Save'),
           ),
         ],
       ),

@@ -13,7 +13,7 @@ Expense tracker app for Egypt/MENA. Manual entry + Add from SMS (paste). Uses th
    flutter create .   # if android/ or ios/ are missing
    cd ios && pod install && cd ..
    ```
-4. Set the API base URL in the app (e.g. in Settings or where `lib/api.dart` / app state read it). For Simulator use your Mac’s IP (e.g. `http://192.168.x.x:3000`), not `localhost`. For a physical device on the same Wi‑Fi, use the same IP.
+4. **API base URL** is set at build time (see `lib/config.dart`). Default is `http://localhost:3000`. For Simulator use your Mac’s IP (e.g. `http://192.168.x.x:3000`). For production build use `--dart-define=MEZAN_API_URL=https://your-app.onrender.com`.
 
 ## Run
 

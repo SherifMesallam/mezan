@@ -1,8 +1,10 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 
+import 'config.dart';
+
 class Api {
-  Api({this.baseUrl = 'http://localhost:3000', this.token});
+  Api({String? baseUrl, this.token}) : baseUrl = baseUrl ?? apiBaseUrl;
 
   final String baseUrl;
   String? token;
