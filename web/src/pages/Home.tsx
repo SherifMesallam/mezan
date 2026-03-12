@@ -241,7 +241,7 @@ export default function Home() {
   const [dateTo, setDateTo] = useState(monthRange(currentMonth)[1]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
-  const [budgetStatus, setBudgetStatus] = useState<BudgetStatus[]>([]);
+  const [, setBudgetStatus] = useState<BudgetStatus[]>([]);
   const [summary, setSummary] = useState<SummaryItem[]>([]);
   const [budgetByCategory, setBudgetByCategory] = useState<{
     items: BudgetByCategoryItem[];
@@ -301,7 +301,6 @@ export default function Home() {
   }, [token, month, from, to, refreshCounter]);
 
   const nameById = Object.fromEntries((budgetByCategory?.items || []).map((r) => [r.category_id, r.category_name]));
-  const categoryNameById = Object.fromEntries(categories.map((c) => [c.id, c.name]));
   const pieData = summary.map((s, i) => ({
     name: nameById[s.key] || s.key,
     value: s.total,
