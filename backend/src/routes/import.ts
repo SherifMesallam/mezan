@@ -944,3 +944,202 @@ importRouter.post('/sheet-merge-confirm', async (req: AuthRequest, res) => {
     });
   }
 });
+
+/** Shape of full export payload from GET /v1/users/export */
+type ExportPayload = {
+  version?: number;
+  exportedAt?: string;
+  user?: { id?: string; email?: string; createdAt?: string };
+  userSettings?: {
+    id?: string;
+    userId?: string;
+    defaultCurrency?: string;
+    locale?: string;
+    setupCompletedAt?: string | null;
+    inboundEmailLocal?: string | null;
+  } | null;
+  categories?: Array<{
+    id: string;
+    userId?: string;
+    parentId?: string | null;
+    name: string;
+    nameAr?: string | null;
+    icon?: string | null;
+    color?: string | null;
+    isSystem?: boolean;
+    sortOrder?: number;
+  }>;
+  tags?: Array<{
+    id: string;
+    userId?: string;
+    name: string;
+    nameAr?: string | null;
+    color?: string | null;
+  }>;
+  budgets?: Array<{
+    id: string;
+    userId?: string;
+    scopeType: string;
+    scopeId?: string | null;
+    amount: number;
+    currency?: string;
+    month: string;
+  }>;
+  transactions?: Array<{
+    id: string;
+    userId?: string;
+    amount: number;
+    currency?: string;
+    egpValue?: number | null;
+    categoryId: string;
+    date: string;
+    time?: string | null;
+    locationTile?: string | null;
+    locationVenueHint?: string | null;
+    merchant?: string | null;
+    source?: string;
+    userConfirmedAt?: string | null;
+    createdAt?: string;
+    tagIds?: string[];
+  }>;
+};
+
+/**
+ * POST /v1/import/data
+ * Body: full export JSON (from GET /v1/users/export).
+ * Replaces all current user data with the imported data (categories, tags, budgets, transactions, settings).
+ * Does not import ingest token; user can regenerate in Settings.
+ */
+importRouter.post('/data', async (req: AuthRequest, res) => {
+  try {
+    const userId = req.user!.userId;
+    const body = req.body as ExportPayload;
+
+    if (!body || typeof body !== 'object') {
+      res.status(422).json({ error: 'Invalid export payload' });
+      return;
+    }
+
+    const categories = Array.isArray(body.categories) ? body.categories : [];
+    const tags = Array.isArray(body.tags) ? body.tags : [];
+    const budgets = Array.isArray(body.budgets) ? body.budgets : [];
+    const transactions = Array.isArray(body.transactions) ? body.transactions : [];
+
+    const categoryIds = new Set(categories.map((c) => c.id));
+    const tagIds = new Set(tags.map((t) => t.id));
+
+    await prisma.$transaction(async (tx) => {
+      await tx.transactionTag.deleteMany({
+        where: { transaction: { userId } },
+      });
+      await tx.transaction.deleteMany({ where: { userId } });
+      await tx.budget.deleteMany({ where: { userId } });
+      await tx.tag.deleteMany({ where: { userId } });
+      await tx.category.deleteMany({ where: { userId } });
+      await tx.userSettings.deleteMany({ where: { userId } });
+
+      if (body.userSettings && typeof body.userSettings === 'object') {
+        await tx.userSettings.create({
+          data: {
+            userId,
+            defaultCurrency: (body.userSettings.defaultCurrency && String(body.userSettings.defaultCurrency).slice(0, 10)) || 'EGP',
+            locale: (body.userSettings.locale && String(body.userSettings.locale).slice(0, 20)) || 'en',
+            setupCompletedAt: body.userSettings.setupCompletedAt
+              ? new Date(body.userSettings.setupCompletedAt)
+              : null,
+            inboundEmailLocal:
+              body.userSettings.inboundEmailLocal != null && String(body.userSettings.inboundEmailLocal).trim() !== ''
+                ? String(body.userSettings.inboundEmailLocal).trim().slice(0, 100)
+                : null,
+          },
+        });
+      }
+
+      for (const c of categories) {
+        if (!c.id || !c.name) continue;
+        await tx.category.create({
+          data: {
+            id: c.id,
+            userId,
+            parentId: c.parentId && categoryIds.has(c.parentId) ? c.parentId : null,
+            name: c.name.slice(0, 200),
+            nameAr: c.nameAr != null ? c.nameAr.slice(0, 200) : null,
+            icon: c.icon != null ? c.icon.slice(0, 100) : null,
+            color: c.color != null ? c.color.slice(0, 50) : null,
+            isSystem: Boolean(c.isSystem),
+            sortOrder: Number(c.sortOrder) || 0,
+          },
+        });
+      }
+
+      for (const t of tags) {
+        if (!t.id || !t.name) continue;
+        await tx.tag.create({
+          data: {
+            id: t.id,
+            userId,
+            name: t.name.slice(0, 100),
+            nameAr: t.nameAr != null ? t.nameAr.slice(0, 100) : null,
+            color: t.color != null ? t.color.slice(0, 50) : null,
+          },
+        });
+      }
+
+      for (const b of budgets) {
+        if (!b.id || !b.scopeType || !b.month) continue;
+        const scopeId = b.scopeId != null && (categoryIds.has(b.scopeId) || tagIds.has(b.scopeId)) ? b.scopeId : null;
+        await tx.budget.create({
+          data: {
+            id: b.id,
+            userId,
+            scopeType: b.scopeType.slice(0, 50),
+            scopeId,
+            amount: Number(b.amount) || 0,
+            currency: (b.currency && String(b.currency).slice(0, 10)) || 'EGP',
+            month: b.month.slice(0, 10),
+          },
+        });
+      }
+
+      for (const t of transactions) {
+        if (!t.id || !t.categoryId || !categoryIds.has(t.categoryId) || !t.date) continue;
+        const tagIdsForTx = Array.isArray(t.tagIds) ? t.tagIds.filter((id) => tagIds.has(id)) : [];
+        await tx.transaction.create({
+          data: {
+            id: t.id,
+            userId,
+            amount: Number(t.amount) || 0,
+            currency: (t.currency && String(t.currency).slice(0, 10)) || 'EGP',
+            egpValue: t.egpValue != null && !Number.isNaN(Number(t.egpValue)) ? Number(t.egpValue) : null,
+            categoryId: t.categoryId,
+            date: t.date.slice(0, 10),
+            time: t.time != null ? String(t.time).slice(0, 30) : null,
+            locationTile: t.locationTile != null ? String(t.locationTile).slice(0, 200) : null,
+            locationVenueHint: t.locationVenueHint != null ? String(t.locationVenueHint).slice(0, 200) : null,
+            merchant: t.merchant != null ? String(t.merchant).slice(0, 200) : null,
+            source: (t.source && String(t.source).slice(0, 50)) || 'manual',
+            userConfirmedAt: t.userConfirmedAt ? new Date(t.userConfirmedAt) : null,
+            tags: tagIdsForTx.length > 0 ? { create: tagIdsForTx.map((tagId) => ({ tagId })) } : undefined,
+          },
+        });
+      }
+    });
+
+    res.json({
+      ok: true,
+      imported: {
+        categories: categories.length,
+        tags: tags.length,
+        budgets: budgets.length,
+        transactions: transactions.length,
+      },
+    });
+  } catch (e) {
+    console.error(e);
+    const message = e instanceof Error ? e.message : String(e);
+    res.status(500).json({
+      error: message || 'Failed to import data',
+      details: e instanceof Error ? e.stack : undefined,
+    });
+  }
+});
