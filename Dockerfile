@@ -11,7 +11,8 @@ RUN npm ci
 COPY backend/prisma ./prisma
 RUN npx prisma generate
 
-COPY backend/tsconfig.json backend/src ./ 
+COPY backend/tsconfig.json ./
+COPY backend/src ./src
 RUN npm run build
 
 # ---- Web build (same-origin API) ----
