@@ -31,7 +31,8 @@ COPY web/public ./public
 RUN npm run build
 
 # ---- Run: backend serves API + web static ----
-FROM node:20-alpine AS run
+# Use Debian-based image so Prisma engine finds correct OpenSSL (Alpine often fails at runtime).
+FROM node:20-slim AS run
 WORKDIR /app
 
 ENV NODE_ENV=production
