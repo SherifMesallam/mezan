@@ -37,6 +37,9 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 
+# Prisma schema engine requires OpenSSL at runtime (slim image does not include it).
+RUN apt-get update -y && apt-get install -y openssl ca-certificates && rm -rf /var/lib/apt/lists/*
+
 # Backend runtime deps + Prisma
 COPY backend/package.json backend/package-lock.json* ./
 RUN npm ci --omit=dev
