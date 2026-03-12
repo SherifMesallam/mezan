@@ -1,0 +1,15 @@
+# One-step Dockerfile uses backend/ and web/ only
+mobile
+.git
+*.log
+.env
+.env.*
+!backend/.env.example
+node_modules
+*/node_modules
+web/dist
+backend/dist
+.DS_Store
+*.md
+!backend/README.md
+!web/README.md

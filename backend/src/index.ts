@@ -1,5 +1,7 @@
 import 'dotenv/config';
 import express from 'express';
+import path from 'path';
+import fs from 'fs';
 import cors from 'cors';
 import { authRouter } from './routes/auth';
 import { ingestRouter } from './routes/ingest';
@@ -34,6 +36,17 @@ app.use('/v1/import', importRouter);
 
 app.get('/health', (_req, res) => res.json({ status: 'ok' }));
 
-app.listen(port, () => {
-  console.log(`Mezan API listening on port ${port}`);
+// In production, serve the web app from web-dist (single-container deploy)
+const webDist = path.join(__dirname, '..', 'web-dist');
+if (process.env.NODE_ENV === 'production' && fs.existsSync(webDist)) {
+  app.use(express.static(webDist));
+  app.get('*', (req, res, next) => {
+    if (req.path.startsWith('/v1') || req.path === '/health') return next();
+    res.sendFile(path.join(webDist, 'index.html'));
+  });
+}
+
+const host = process.env.HOST ?? '0.0.0.0';
+app.listen(Number(port), host, () => {
+  console.log(`Mezan API listening on ${host}:${port}`);
 });

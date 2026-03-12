@@ -25,3 +25,10 @@ web/dist/
 mobile/.dart_tool/
 mobile/.packages
 mobile/build/
+
+# Docker / deploy
+*.tar
+
+# TypeScript / Vite
+*.tsbuildinfo
+.web/

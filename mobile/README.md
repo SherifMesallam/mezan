@@ -4,19 +4,97 @@ Expense tracker app for Egypt/MENA. Manual entry + Add from SMS (paste). Uses th
 
 ## Setup
 
-1. Install [Flutter](https://flutter.dev/docs/get-started/install).
-2. From this directory run:
+1. Install [Flutter](https://flutter.dev/docs/get-started/install) (macOS required for iOS).
+2. Install Xcode from the App Store (for iOS Simulator / device).  
+   CocoaPods: `sudo gem install cocoapods` (or via Homebrew).
+3. From this directory run:
    ```bash
    flutter pub get
-   flutter create .  # if android/ or ios/ are missing
+   flutter create .   # if android/ or ios/ are missing
+   cd ios && pod install && cd ..
    ```
-3. Set the API base URL: edit `lib/api.dart` and change `baseUrl` default (e.g. to your backend URL). For device emulator use `http://10.0.2.2:3000` (Android) or your machine IP.
+4. Set the API base URL in the app (e.g. in Settings or where `lib/api.dart` / app state read it). For Simulator use your Mac’s IP (e.g. `http://192.168.x.x:3000`), not `localhost`. For a physical device on the same Wi‑Fi, use the same IP.
 
 ## Run
 
 ```bash
 flutter run
 ```
+
+## Test the iOS app (all-in-one)
+
+In a terminal where `flutter` is in your PATH (e.g. your normal Mac terminal), from the repo root or from `mobile/`:
+
+```bash
+# From repo root
+./mobile/setup_and_run_ios.sh
+
+# Or from mobile/
+cd mobile && ./setup_and_run_ios.sh
+```
+
+The script: runs `flutter doctor`, `flutter pub get`, creates `ios/` (and `android/`) if missing, runs `pod install`, lists devices, then runs `flutter run -d ios`.
+
+**Manual steps (if you prefer):**
+
+```bash
+cd mobile
+flutter doctor -v
+flutter pub get
+flutter create .          # only if ios/ (or android/) is missing
+cd ios && pod install && cd ..
+flutter devices
+flutter run -d ios        # or: flutter run -d "iPhone 16 Pro"
+```
+
+**Physical iPhone:** Connect via USB, trust the Mac, select the device in Xcode signing for `ios/Runner`, then `flutter run -d <device-id>` (device id from `flutter devices`).
+
+### iOS: Xcode required (iPhone not in device list / xcodebuild error)
+
+If `flutter devices` only shows macOS and Chrome and no iPhone or iOS Simulator, or you see **xcodebuild: unable to find utility "xcodebuild"**:
+
+1. **Install Xcode** from the App Store (full Xcode, not just “Command Line Tools”).
+2. **Point the command-line tools at Xcode:**
+   ```bash
+   sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+   ```
+3. **Accept the Xcode license** (if prompted):
+   ```bash
+   sudo xcodebuild -license accept
+   ```
+4. **CocoaPods** (for iOS deps): install if `pod` is not found:
+   ```bash
+   sudo gem install cocoapods
+   # or: brew install cocoapods
+   ```
+   Then in the app: `cd ios && pod install`.
+
+After that, connect your iPhone via USB, unlock it, tap “Trust” if asked, and run `flutter devices` again — your iPhone and iOS Simulators should appear.
+
+**One-time script after Xcode is installed:** From `mobile/`, run `./after_installing_xcode.sh`. It runs `sudo xcode-select`, accepts the license, and `pod install` (you’ll be prompted for your Mac password).
+
+### iOS: Code signing for a physical iPhone
+
+When you see **No valid code signing certificates were found** or **No development certificates available**:
+
+1. **Open the project in Xcode** (use the workspace, not the project):
+   ```bash
+   open ios/Runner.xcworkspace
+   ```
+2. In the **left sidebar**, click the blue **Runner** project (top item), then select the **Runner** target (under TARGETS).
+3. Open the **Signing & Capabilities** tab.
+4. Check **Automatically manage signing**.
+5. In **Team**, choose your Apple ID:
+   - If the list is empty: click **Add an Account…**, sign in with your Apple ID (free account is enough for running on your own device).
+   - Then pick that account as the Team.
+6. If Xcode shows a **Bundle ID** conflict (e.g. “already in use”), change it to something unique, e.g. `com.yourname.mezan` (in the **General** tab → **Bundle Identifier**).
+7. Connect your iPhone, unlock it, and select it as the run destination at the top of Xcode (or leave it for Flutter).
+8. On the **iPhone**: **Settings → General → VPN & Device Management** → under Developer App, tap your Apple ID → **Trust** (if shown).
+9. From the terminal, run again:
+   ```bash
+   flutter run -d 00008110-000120A43CDA401E
+   ```
+   (Use your device id from `flutter devices`.)
 
 ## Features
 

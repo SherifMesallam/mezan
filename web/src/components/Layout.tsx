@@ -10,6 +10,7 @@ const nav = [
   { to: '/transactions', label: 'Transactions' },
   { to: '/add', label: 'Add transaction' },
   { to: '/sms', label: 'Add from SMS' },
+  { to: '/image', label: 'Scan receipt' },
   { to: '/sheet-merge', label: 'Merge import from sheet' },
   { to: '/charts', label: 'Charts' },
   { to: '/budgets', label: 'Budgets' },

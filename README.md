@@ -2,6 +2,8 @@
 
 Expense tracker for Egypt/MENA – backend API, web UI, and mobile app.
 
+**Push to GitHub:** See [docs/PUSH_TO_GITHUB.md](docs/PUSH_TO_GITHUB.md) for adding `origin` and pushing to [github.com/SherifMesallam/mezan](https://github.com/SherifMesallam/mezan).
+
 ## Run on localhost (web interface)
 
 Use two terminals (or the one-command option below).
@@ -66,6 +68,12 @@ This starts both backend and web (requires `concurrently`; see root `package.jso
 | **backend** | Express API (auth, transactions, categories, tags, budgets, ingest, insights) |
 | **web** | React + Vite web UI – login, SMS paste screen |
 | **mobile** | Flutter app (manual entry, Add from SMS, charts, budgets) |
+
+## Deploy (one step, e.g. Railway)
+
+A single **Dockerfile** at the repo root builds the backend and web and runs one process (API + web on the same origin). On **Railway**: add **PostgreSQL**, then **Deploy from GitHub** → select this repo. Set **Variables**: `DATABASE_URL` (from Postgres), `JWT_SECRET`, `INGEST_TOKEN_SECRET`. Generate a domain. That’s it — one service serves both API and web.
+
+See **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)** for details and for separate backend + web deploys.
 
 ## Health check
 

@@ -86,96 +86,147 @@ export default function AddTransaction() {
   if (loading) return <div className="loading">Loading…</div>;
 
   return (
-    <>
-      <h1 className="page-title">Add transaction</h1>
-      <p className="page-subtitle">Manual entry</p>
-      <form onSubmit={submit} className="card">
-        <label className="label">Amount</label>
-        <input
-          type="number"
-          step="0.01"
-          min="0"
-          className="input"
-          value={amount}
-          onChange={(e) => setAmount(e.target.value)}
-          required
-        />
-        <label className="label">Currency</label>
-        <select
-          className="input"
-          value={currency}
-          onChange={(e) => setCurrency(e.target.value)}
-        >
-          <option value="EGP">EGP</option>
-          <option value="USD">USD</option>
-          <option value="EUR">EUR</option>
-          <option value="GBP">GBP</option>
-          <option value="SAR">SAR</option>
-          <option value="AED">AED</option>
-          <option value="KWD">KWD</option>
-        </select>
-        {currency !== 'EGP' && (
-          <>
-            <label className="label">EGP value (optional)</label>
-            <p className="page-subtitle" style={{ marginTop: '-0.5rem', marginBottom: '0.5rem' }}>
-              Used in totals, budgets and charts. Enter the equivalent in EGP so this transaction is counted correctly.
-            </p>
-            <input
-              type="number"
-              step="0.01"
-              min="0"
-              className="input"
-              value={egpValue}
-              onChange={(e) => setEgpValue(e.target.value)}
-              placeholder="e.g. 35000"
-            />
-          </>
-        )}
-        <label className="label">Merchant (optional)</label>
-        <input
-          type="text"
-          className="input"
-          value={merchant}
-          onChange={(e) => setMerchant(e.target.value)}
-          placeholder="e.g. Fawry"
-        />
-        <label className="label">Category</label>
-        <select
-          className="input"
-          value={categoryId}
-          onChange={(e) => setCategoryId(e.target.value)}
-          required
-        >
-          {categories.map((c) => (
-            <option key={c.id} value={c.id}>{c.name}</option>
-          ))}
-        </select>
-        <label className="label">Date</label>
-        <input type="date" className="input" value={date} onChange={(e) => setDate(e.target.value)} />
-        <label className="label">Time</label>
-        <input type="time" className="input" value={time} onChange={(e) => setTime(e.target.value)} />
-        {tags.length > 0 && (
-          <>
-            <label className="label">Tags</label>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
-              {tags.map((t) => (
-                <label key={t.id} style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                  <input
-                    type="checkbox"
-                    checked={tagIds.includes(t.id)}
-                    onChange={() => toggleTag(t.id)}
-                  />
-                  {t.name}
-                </label>
-              ))}
+    <div className="add-page">
+      <header className="add-header">
+        <h1 className="page-title">Add transaction</h1>
+        <p className="page-subtitle">Enter a transaction manually</p>
+      </header>
+
+      <form onSubmit={submit} className="add-form-card">
+        <section className="add-form-section">
+          <h2 className="add-form-section-title">Amount & currency</h2>
+          <label className="label" htmlFor="add-amount">Amount</label>
+          <input
+            id="add-amount"
+            type="number"
+            step="0.01"
+            min="0"
+            className="input"
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+            placeholder="0.00"
+            required
+          />
+          <label className="label" htmlFor="add-currency">Currency</label>
+          <select
+            id="add-currency"
+            className="input"
+            value={currency}
+            onChange={(e) => setCurrency(e.target.value)}
+          >
+            <option value="EGP">EGP</option>
+            <option value="USD">USD</option>
+            <option value="EUR">EUR</option>
+            <option value="GBP">GBP</option>
+            <option value="SAR">SAR</option>
+            <option value="AED">AED</option>
+            <option value="KWD">KWD</option>
+          </select>
+          {currency !== 'EGP' && (
+            <>
+              <label className="label" htmlFor="add-egp">EGP value (optional)</label>
+              <p className="add-form-hint">
+                Used in totals, budgets and charts. Enter the equivalent in EGP so this transaction is counted correctly.
+              </p>
+              <input
+                id="add-egp"
+                type="number"
+                step="0.01"
+                min="0"
+                className="input"
+                value={egpValue}
+                onChange={(e) => setEgpValue(e.target.value)}
+                placeholder="e.g. 35000"
+              />
+            </>
+          )}
+        </section>
+
+        <section className="add-form-section">
+          <h2 className="add-form-section-title">Details</h2>
+          <label className="label" htmlFor="add-merchant">Merchant (optional)</label>
+          <input
+            id="add-merchant"
+            type="text"
+            className="input"
+            value={merchant}
+            onChange={(e) => setMerchant(e.target.value)}
+            placeholder="e.g. Fawry, APPLE.COM"
+          />
+          <label className="label" htmlFor="add-category">Category</label>
+          <select
+            id="add-category"
+            className="input"
+            value={categoryId}
+            onChange={(e) => setCategoryId(e.target.value)}
+            required
+          >
+            {categories.map((c) => (
+              <option key={c.id} value={c.id}>{c.name}</option>
+            ))}
+          </select>
+          {tags.length > 0 && (
+            <>
+              <label className="label">Tags</label>
+              <div className="add-form-tags">
+                {tags.map((t) => (
+                  <label
+                    key={t.id}
+                    className={`add-form-tag ${tagIds.includes(t.id) ? 'add-form-tag--checked' : ''}`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={tagIds.includes(t.id)}
+                      onChange={() => toggleTag(t.id)}
+                    />
+                    {t.name}
+                  </label>
+                ))}
+              </div>
+            </>
+          )}
+        </section>
+
+        <section className="add-form-section">
+          <h2 className="add-form-section-title">Date & time</h2>
+          <div className="add-form-row">
+            <div>
+              <label className="label" htmlFor="add-date">Date</label>
+              <input
+                id="add-date"
+                type="date"
+                className="input"
+                value={date}
+                onChange={(e) => setDate(e.target.value)}
+              />
             </div>
-          </>
-        )}
-        {error && <p className="error">{error}</p>}
-        <button type="submit" className="btn btn-primary" style={{ marginTop: '1rem' }} disabled={saving}>
-          {saving ? 'Saving…' : 'Save'}
-        </button>
+            <div>
+              <label className="label" htmlFor="add-time">Time</label>
+              <input
+                id="add-time"
+                type="time"
+                className="input"
+                value={time}
+                onChange={(e) => setTime(e.target.value)}
+              />
+            </div>
+          </div>
+        </section>
+
+        <div className="add-form-footer">
+          {error && <p className="error">{error}</p>}
+          <button type="submit" className="btn btn-primary" disabled={saving}>
+            {saving ? 'Saving…' : 'Save transaction'}
+          </button>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={() => navigate('/')}
+          >
+            Cancel
+          </button>
+        </div>
       </form>
-    </>
+    </div>
   );
 }

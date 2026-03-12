@@ -28,6 +28,20 @@ npm run preview   # serve dist/
 
 For production, set `VITE_API_URL` to your API origin (e.g. `https://api.mezan.app`) so requests go to the correct host.
 
+## Deploy with Docker (e.g. Railway)
+
+The repo includes a **Dockerfile** that builds the app and serves it with nginx. The API URL is fixed at **build time**.
+
+```bash
+# Build (set your backend URL)
+docker build -t mezan-web --build-arg VITE_API_URL=https://your-backend.up.railway.app web
+
+# Run (port 8080)
+docker run -p 8080:8080 -e PORT=8080 mezan-web
+```
+
+On **Railway**: add a service from the same repo with **Root directory** `web` and **Dockerfile** builder. Set the variable **VITE_API_URL** to your backend URL (Railway passes it as a build arg). See [docs/DEPLOYMENT.md](../docs/DEPLOYMENT.md).
+
 ## Features
 
 - **Log in / Sign up** – JWT stored in `localStorage`

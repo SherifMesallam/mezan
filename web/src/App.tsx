@@ -13,6 +13,7 @@ import Transactions from './pages/Transactions';
 import Settings from './pages/Settings';
 import SetupWizard from './pages/SetupWizard';
 import MergeFromSheet from './pages/MergeFromSheet';
+import AddFromImage from './pages/AddFromImage';
 
 const TOKEN_KEY = 'mezan_token';
 const INGEST_TOKEN_KEY = 'mezan_ingest_token';
@@ -56,6 +57,7 @@ export default function App() {
         <Route index element={<Home />} />
         <Route path="add" element={<AddTransaction />} />
         <Route path="sms" element={<SmsPaste />} />
+        <Route path="image" element={<AddFromImage />} />
         <Route path="sheet-merge" element={<MergeFromSheet />} />
         <Route path="charts" element={<Charts />} />
         <Route path="budgets" element={<Budgets />} />

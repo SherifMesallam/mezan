@@ -10,6 +10,7 @@ import {
   type ExistingTransactionForMatch,
 } from '../services/sheet-merge';
 import { extractTransactionsFromSMS } from '../services/sms-extract';
+import { extractTransactionsFromImage } from '../services/image-extract';
 import { getLearningTransactionsForUser } from './ingest';
 
 export const importRouter = Router();
@@ -128,6 +129,12 @@ importRouter.post('/sms-merge-preview', async (req: AuthRequest, res) => {
       res.status(422).json({ error: 'raw_text is required' });
       return;
     }
+    const rawMonths = req.body?.expected_months;
+    const expected_months: number[] = Array.isArray(rawMonths)
+      ? rawMonths
+          .map((m: unknown) => (typeof m === 'number' ? m : parseInt(String(m), 10)))
+          .filter((m: number) => Number.isFinite(m) && m >= 1 && m <= 12)
+      : [];
 
     const apiKey = process.env.OPENAI_API_KEY?.trim();
     if (!apiKey) {
@@ -238,7 +245,7 @@ importRouter.post('/sms-merge-preview', async (req: AuthRequest, res) => {
     }
 
     const items = extracted.map((ext, i) => {
-      const dateNorm = normalizeDateToYYYYMMDD(ext.date);
+      const dateNorm = normalizeDateToYYYYMMDD(ext.date, expected_months.length > 0 ? expected_months : undefined);
       if (!dateNorm) {
         console.log(`${logPrefix} Row ${i}: date could not be normalized -> no match. ext.date=${JSON.stringify(ext.date)}`);
         return {
@@ -342,7 +349,7 @@ importRouter.post('/sms-merge-preview', async (req: AuthRequest, res) => {
         sheet_index: i,
         amount: ext.amount,
         currency: ext.currency,
-        date: dateCorrected ? dateUsed : ext.date,
+        date: dateUsed,
         time: ext.time,
         category_name: ext.suggested_category ?? 'Other',
         merchant: ext.merchant,
@@ -358,6 +365,215 @@ importRouter.post('/sms-merge-preview', async (req: AuthRequest, res) => {
     const message = e instanceof Error ? e.message : String(e);
     res.status(500).json({
       error: message || 'Failed to parse or match SMS',
+      details: e instanceof Error ? e.stack : undefined,
+    });
+  }
+});
+
+/**
+ * POST /v1/import/image-merge-preview
+ * Body: { image_base64: string, mime_type: string } (e.g. image/jpeg, image/png)
+ * Runs OCR + extraction via OpenAI Vision, then matches to existing transactions.
+ * Returns same items shape as sms-merge-preview for the match wizard.
+ */
+importRouter.post('/image-merge-preview', async (req: AuthRequest, res) => {
+  try {
+    const userId = req.user!.userId;
+    const imageBase64 = typeof req.body?.image_base64 === 'string' ? req.body.image_base64.trim() : '';
+    const mimeType = typeof req.body?.mime_type === 'string' ? req.body.mime_type.trim() : 'image/jpeg';
+    if (!imageBase64) {
+      res.status(422).json({ error: 'image_base64 is required' });
+      return;
+    }
+    const rawMonths = req.body?.expected_months;
+    const expected_months: number[] = Array.isArray(rawMonths)
+      ? rawMonths
+          .map((m: unknown) => (typeof m === 'number' ? m : parseInt(String(m), 10)))
+          .filter((m: number) => Number.isFinite(m) && m >= 1 && m <= 12)
+      : [];
+
+    const apiKey = process.env.OPENAI_API_KEY?.trim();
+    if (!apiKey) {
+      res.status(501).json({
+        error: 'AI not configured. Set OPENAI_API_KEY in backend .env.',
+      });
+      return;
+    }
+
+    const [categories, existingTx] = await Promise.all([
+      prisma.category.findMany({
+        where: { userId },
+        select: { id: true, name: true },
+        orderBy: { sortOrder: 'asc' },
+      }),
+      prisma.transaction.findMany({
+        where: { userId },
+        orderBy: [{ date: 'desc' }, { createdAt: 'desc' }],
+        take: 2000,
+        include: { category: { select: { name: true } } },
+      }),
+    ]);
+
+    const userCategoryNames = categories.map((c) => c.name.trim()).filter(Boolean);
+    const extracted = await extractTransactionsFromImage(
+      {
+        apiKey,
+        baseURL: process.env.OPENAI_BASE_URL?.trim() || undefined,
+        model: process.env.OPENAI_MODEL?.trim() || 'gpt-4o-mini',
+      },
+      imageBase64,
+      mimeType,
+      userCategoryNames
+    );
+
+    if (extracted.length === 0) {
+      res.json({ items: [] });
+      return;
+    }
+
+    function toAmountNum(t: { amount: unknown }): number {
+      const v = t.amount;
+      if (typeof v === 'number' && !Number.isNaN(v)) return v;
+      if (v != null && typeof (v as { toNumber?: () => number }).toNumber === 'function') {
+        return (v as { toNumber: () => number }).toNumber();
+      }
+      return Number(v);
+    }
+
+    const categoryNameToId = new Map<string, string>();
+    const categoryIdToName = new Map<string, string>();
+    const categoryNamesLower: { id: string; nameLower: string }[] = [];
+    for (const c of categories) {
+      const key = c.name.trim().toLowerCase();
+      if (key) {
+        categoryNameToId.set(key, c.id);
+        categoryIdToName.set(c.id, c.name);
+        categoryNamesLower.push({ id: c.id, nameLower: key });
+      }
+    }
+
+    function resolveCategoryId(suggested: string): string | null {
+      const s = suggested.trim().toLowerCase();
+      if (!s) return null;
+      const exact = categoryNameToId.get(s);
+      if (exact) return exact;
+      for (const { id, nameLower } of categoryNamesLower) {
+        if (nameLower.includes(s) || s.includes(nameLower)) return id;
+      }
+      return null;
+    }
+
+    function dateAddDays(dateStr: string, days: number): string {
+      const [y, m, d] = dateStr.split('-').map(Number);
+      const dt = new Date(y, m - 1, d);
+      dt.setDate(dt.getDate() + days);
+      return dt.toISOString().slice(0, 10);
+    }
+
+    function trySwapDayMonth(iso: string): string | null {
+      const parts = iso.split('-').map(Number);
+      if (parts.length !== 3) return null;
+      const [y, m, d] = parts;
+      if (m <= 12 && d <= 12 && m !== d) {
+        return `${y}-${String(d).padStart(2, '0')}-${String(m).padStart(2, '0')}`;
+      }
+      return null;
+    }
+
+    const items = extracted.map((ext, i) => {
+      const dateNorm = normalizeDateToYYYYMMDD(ext.date, expected_months.length > 0 ? expected_months : undefined);
+      if (!dateNorm) {
+        return {
+          sheet_index: i,
+          amount: ext.amount,
+          currency: ext.currency,
+          date: ext.date,
+          time: ext.time ?? null,
+          category_name: ext.suggested_category ?? 'Other',
+          merchant: ext.merchant,
+          source_snippet: ext.source_snippet ?? null,
+          matched_entry_id: null,
+          matched_entry: null,
+        };
+      }
+      const suggestedCat = ext.suggested_category ?? '';
+      const resolvedCategoryId = resolveCategoryId(suggestedCat);
+      const amountLo = ext.amount - 30;
+      const amountHi = ext.amount + 30;
+
+      function candidatesForDateRange(dateFrom: string, dateTo: string) {
+        if (resolvedCategoryId == null) return [];
+        return existingTx.filter((t) => {
+          const amt = toAmountNum(t);
+          return (
+            t.categoryId === resolvedCategoryId &&
+            amt >= amountLo &&
+            amt <= amountHi &&
+            t.date >= dateFrom &&
+            t.date <= dateTo
+          );
+        });
+      }
+
+      let dateFrom = dateAddDays(dateNorm, -2);
+      let dateTo = dateAddDays(dateNorm, 2);
+      let candidates = candidatesForDateRange(dateFrom, dateTo);
+      let dateUsed = dateNorm;
+      let dateCorrected = false;
+
+      if (candidates.length === 0) {
+        const swapped = trySwapDayMonth(dateNorm);
+        if (swapped) {
+          const dateFromSwap = dateAddDays(swapped, -2);
+          const dateToSwap = dateAddDays(swapped, 2);
+          const candidatesSwap = candidatesForDateRange(dateFromSwap, dateToSwap);
+          if (candidatesSwap.length > 0) {
+            candidates = candidatesSwap;
+            dateFrom = dateFromSwap;
+            dateTo = dateToSwap;
+            dateUsed = swapped;
+            dateCorrected = true;
+          }
+        }
+      }
+
+      const best =
+        candidates.length === 0
+          ? null
+          : candidates.reduce((a, b) =>
+              Math.abs(toAmountNum(a) - ext.amount) <= Math.abs(toAmountNum(b) - ext.amount) ? a : b
+            );
+
+      const matched_entry = best
+        ? {
+            id: best.id,
+            amount: toAmountNum(best),
+            date: best.date,
+            category_name: best.category?.name?.trim() ?? '',
+            merchant: best.merchant,
+          }
+        : null;
+
+      return {
+        sheet_index: i,
+        amount: ext.amount,
+        currency: ext.currency,
+        date: dateUsed,
+        time: ext.time ?? null,
+        category_name: ext.suggested_category ?? 'Other',
+        merchant: ext.merchant,
+        source_snippet: ext.source_snippet ?? null,
+        matched_entry_id: best?.id ?? null,
+        matched_entry,
+      };
+    });
+
+    res.json({ items });
+  } catch (e) {
+    console.error(e);
+    const message = e instanceof Error ? e.message : String(e);
+    res.status(500).json({
+      error: message || 'Failed to extract or match from image',
       details: e instanceof Error ? e.stack : undefined,
     });
   }

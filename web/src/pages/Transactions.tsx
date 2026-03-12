@@ -1,7 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { api } from '../api';
 import { getStoredToken } from '../App';
+
+type SortBy = 'date' | 'merchant' | 'category' | 'amount';
+type SortOrder = 'asc' | 'desc';
 
 type Tag = { id: string; name: string; nameAr?: string | null };
 type Category = { id: string; name: string; nameAr?: string | null };
@@ -100,121 +103,101 @@ function EditTransactionModal({
   }
 
   return (
-    <div
-      style={{
-        position: 'fixed',
-        inset: 0,
-        background: 'rgba(0,0,0,0.4)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        zIndex: 1000,
-      }}
-      onClick={onClose}
-    >
-      <div
-        className="card"
-        style={{ maxWidth: 400, width: '90%', maxHeight: '90vh', overflow: 'auto' }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <h3 style={{ margin: '0 0 1rem 0' }}>Edit transaction</h3>
+    <div className="tx-modal-backdrop" onClick={onClose} role="presentation">
+      <div className="tx-modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="tx-edit-title">
+        <div className="tx-modal-header" id="tx-edit-title">Edit transaction</div>
         <form onSubmit={handleSubmit}>
-          <label className="label">Amount</label>
-          <input
-            type="number"
-            step="0.01"
-            min="0"
-            className="input"
-            value={amount}
-            onChange={(e) => setAmount(e.target.value)}
-            style={{ marginBottom: '0.75rem' }}
-          />
-          <label className="label">Currency</label>
-          <select
-            className="input"
-            value={currency}
-            onChange={(e) => setCurrency(e.target.value)}
-            style={{ marginBottom: '0.75rem' }}
-          >
-            <option value="EGP">EGP</option>
-            <option value="USD">USD</option>
-            <option value="EUR">EUR</option>
-            <option value="GBP">GBP</option>
-            <option value="SAR">SAR</option>
-            <option value="AED">AED</option>
-            <option value="KWD">KWD</option>
-          </select>
-          {currency !== 'EGP' && (
-            <>
-              <label className="label">EGP value (optional)</label>
-              <p style={{ margin: '-0.5rem 0 0.5rem', fontSize: '0.85rem', color: '#666' }}>
-                Used in totals and budgets. Enter equivalent in EGP.
-              </p>
-              <input
-                type="number"
-                step="0.01"
-                min="0"
-                className="input"
-                value={egpValue}
-                onChange={(e) => setEgpValue(e.target.value)}
-                placeholder="e.g. 35000"
-                style={{ marginBottom: '0.75rem' }}
-              />
-            </>
-          )}
-          <label className="label">Merchant</label>
-          <input
-            type="text"
-            className="input"
-            value={merchant}
-            onChange={(e) => setMerchant(e.target.value)}
-            style={{ marginBottom: '0.75rem' }}
-          />
-          <label className="label">Category</label>
-          <select
-            className="input"
-            value={categoryId}
-            onChange={(e) => setCategoryId(e.target.value)}
-            style={{ marginBottom: '0.75rem' }}
-          >
-            {categories.map((c) => (
-              <option key={c.id} value={c.id}>{c.name}</option>
-            ))}
-          </select>
-          {tags.length > 0 && (
-            <>
-              <label className="label">Tags</label>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '0.75rem' }}>
-                {tags.map((t) => (
-                  <label key={t.id} style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                    <input
-                      type="checkbox"
-                      checked={tagIds.includes(t.id)}
-                      onChange={() => toggleTag(t.id)}
-                    />
-                    {t.name}
-                  </label>
-                ))}
-              </div>
-            </>
-          )}
-          <label className="label">Date</label>
-          <input
-            type="date"
-            className="input"
-            value={date}
-            onChange={(e) => setDate(e.target.value)}
-            style={{ marginBottom: '0.75rem' }}
-          />
-          <label className="label">Time</label>
-          <input
-            type="time"
-            className="input"
-            value={time}
-            onChange={(e) => setTime(e.target.value)}
-            style={{ marginBottom: '1rem' }}
-          />
-          <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+          <div className="tx-modal-body">
+            <label className="label">Amount</label>
+            <input
+              type="number"
+              step="0.01"
+              min="0"
+              className="input"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+            />
+            <label className="label">Currency</label>
+            <select
+              className="input"
+              value={currency}
+              onChange={(e) => setCurrency(e.target.value)}
+            >
+              <option value="EGP">EGP</option>
+              <option value="USD">USD</option>
+              <option value="EUR">EUR</option>
+              <option value="GBP">GBP</option>
+              <option value="SAR">SAR</option>
+              <option value="AED">AED</option>
+              <option value="KWD">KWD</option>
+            </select>
+            {currency !== 'EGP' && (
+              <>
+                <label className="label">EGP value (optional)</label>
+                <p style={{ margin: '-0.5rem 0 0.5rem', fontSize: '0.85rem', color: 'var(--mezan-text-muted)' }}>
+                  Used in totals and budgets. Enter equivalent in EGP.
+                </p>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  className="input"
+                  value={egpValue}
+                  onChange={(e) => setEgpValue(e.target.value)}
+                  placeholder="e.g. 35000"
+                />
+              </>
+            )}
+            <label className="label">Merchant</label>
+            <input
+              type="text"
+              className="input"
+              value={merchant}
+              onChange={(e) => setMerchant(e.target.value)}
+            />
+            <label className="label">Category</label>
+            <select
+              className="input"
+              value={categoryId}
+              onChange={(e) => setCategoryId(e.target.value)}
+            >
+              {categories.map((c) => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+            {tags.length > 0 && (
+              <>
+                <label className="label">Tags</label>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '0.75rem' }}>
+                  {tags.map((t) => (
+                    <label key={t.id} style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                      <input
+                        type="checkbox"
+                        checked={tagIds.includes(t.id)}
+                        onChange={() => toggleTag(t.id)}
+                      />
+                      {t.name}
+                    </label>
+                  ))}
+                </div>
+              </>
+            )}
+            <label className="label">Date</label>
+            <input
+              type="date"
+              className="input"
+              value={date}
+              onChange={(e) => setDate(e.target.value)}
+            />
+            <label className="label">Time</label>
+            <input
+              type="time"
+              className="input"
+              value={time}
+              onChange={(e) => setTime(e.target.value)}
+            />
+          </div>
+          <div className="tx-modal-footer">
             <button type="button" className="btn btn-secondary" onClick={onClose}>
               Cancel
             </button>
@@ -258,8 +241,70 @@ export default function Transactions() {
   const [saving, setSaving] = useState(false);
   const [refreshCounter, setRefreshCounter] = useState(0);
   const [dateRange, setDateRange] = useState<{ min_date: string; max_date: string; total_count: number } | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [sortBy, setSortBy] = useState<SortBy>('date');
+  const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
 
   const [from, to] = range === 'all' ? ['2000-01-01', '2030-12-31'] : monthRange(month);
+
+  const filteredAndSorted = useMemo(() => {
+    let list = [...transactions];
+    const q = searchQuery.trim().toLowerCase();
+    if (q) {
+      list = list.filter((t) => {
+        const merchant = (t.merchant ?? '').toLowerCase();
+        const category = (t.category?.name ?? '').toLowerCase();
+        const tagNames = (t.tags ?? []).map((tag) => tag.name.toLowerCase()).join(' ');
+        const amountStr = t.amount.toString();
+        const dateStr = t.date;
+        const egpStr = t.egp_value != null ? t.egp_value.toString() : '';
+        return (
+          merchant.includes(q) ||
+          category.includes(q) ||
+          tagNames.includes(q) ||
+          amountStr.includes(q) ||
+          dateStr.includes(q) ||
+          egpStr.includes(q)
+        );
+      });
+    }
+    const mult = sortOrder === 'asc' ? 1 : -1;
+    list.sort((a, b) => {
+      let cmp = 0;
+      switch (sortBy) {
+        case 'date':
+          cmp = a.date.localeCompare(b.date) || (a.time ?? '').localeCompare(b.time ?? '');
+          break;
+        case 'merchant':
+          cmp = (a.merchant ?? '').localeCompare(b.merchant ?? '', undefined, { sensitivity: 'base' });
+          break;
+        case 'category':
+          cmp = (a.category?.name ?? '').localeCompare(b.category?.name ?? '', undefined, { sensitivity: 'base' });
+          break;
+        case 'amount':
+          cmp = (a.egp_value ?? a.amount) - (b.egp_value ?? b.amount);
+          break;
+        default:
+          break;
+      }
+      return mult * cmp;
+    });
+    return list;
+  }, [transactions, searchQuery, sortBy, sortOrder]);
+
+  function toggleSort(field: SortBy) {
+    if (sortBy === field) {
+      setSortOrder((o) => (o === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortBy(field);
+      setSortOrder(field === 'date' || field === 'amount' ? 'desc' : 'asc');
+    }
+  }
+
+  function SortIcon({ column }: { column: SortBy }) {
+    if (sortBy !== column) return <span className="tx-sort-icon">↕</span>;
+    return <span className="tx-sort-icon">{sortOrder === 'asc' ? '↑' : '↓'}</span>;
+  }
 
   useEffect(() => {
     if (!token) return;
@@ -336,46 +381,66 @@ export default function Transactions() {
 
   return (
     <>
-      <h1 className="page-title">Transactions</h1>
-      <p className="page-subtitle">View and manage all transactions</p>
+      <header className="tx-header">
+        <h1 className="page-title">Transactions</h1>
+        <p className="page-subtitle">View and manage all transactions</p>
+      </header>
 
-      <div className="card" style={{ marginBottom: '1rem', display: 'flex', flexWrap: 'wrap', gap: '1rem', alignItems: 'flex-end' }}>
-        <div>
-          <label className="label">Range</label>
-          <select
-            className="input"
-            value={range}
-            onChange={(e) => setRange(e.target.value as 'month' | 'all')}
-            style={{ minWidth: 120 }}
+      <div className="tx-toolbar">
+        <div className="tx-segments">
+          <button
+            type="button"
+            className={`tx-segment ${range === 'month' ? 'tx-segment--active' : ''}`}
+            onClick={() => setRange('month')}
           >
-            <option value="month">This month</option>
-            <option value="all">All time</option>
-          </select>
+            This month
+          </button>
+          <button
+            type="button"
+            className={`tx-segment ${range === 'all' ? 'tx-segment--active' : ''}`}
+            onClick={() => setRange('all')}
+          >
+            All time
+          </button>
         </div>
         {range === 'month' && (
-          <div>
-            <label className="label">Month</label>
+          <div className="tx-month-wrap">
+            <label className="label" htmlFor="tx-month">Month</label>
             <input
+              id="tx-month"
               type="month"
-              className="input"
+              className="input tx-month-input"
               value={month}
               onChange={(e) => setMonth(e.target.value)}
-              style={{ maxWidth: 160 }}
             />
           </div>
         )}
+        <div className="tx-search-wrap">
+          <label className="label" htmlFor="tx-search">Search</label>
+          <input
+            id="tx-search"
+            type="search"
+            className="input"
+            placeholder="Merchant, category, amount…"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            autoComplete="off"
+          />
+        </div>
       </div>
 
       {error && <p className="error">{error}</p>}
-      {fixDatesMessage && <p style={{ margin: 0, color: 'var(--success, #0a0)', fontSize: '0.9rem' }}>{fixDatesMessage}</p>}
+      {fixDatesMessage && <p className="tx-success">{fixDatesMessage}</p>}
 
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem', flexWrap: 'wrap', gap: '0.5rem' }}>
-        <span style={{ fontSize: '0.9rem', color: '#666' }}>
-          {transactions.length === totalCount
-            ? `${transactions.length} transaction${transactions.length !== 1 ? 's' : ''}${range === 'month' ? ' this month' : ''}`
-            : `Showing ${transactions.length} of ${totalCount} transactions`}
+      <div className="tx-bar">
+        <span className="tx-count">
+          {searchQuery.trim()
+            ? `${filteredAndSorted.length} of ${transactions.length} transactions`
+            : transactions.length === totalCount
+              ? `${transactions.length} transaction${transactions.length !== 1 ? 's' : ''}${range === 'month' ? ' this month' : ''}`
+              : `Showing ${transactions.length} of ${totalCount} transactions`}
         </span>
-        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+        <div className="tx-actions">
           <button
             type="button"
             className="btn btn-secondary"
@@ -383,141 +448,171 @@ export default function Transactions() {
             onClick={handleFixDates}
             disabled={fixDatesLoading}
           >
-            {fixDatesLoading ? 'Fixing…' : 'Fix dates if missing'}
+            {fixDatesLoading ? 'Fixing…' : 'Fix dates'}
           </button>
-          <Link to="/add">Add transaction</Link>
+          <Link to="/add" className="btn btn-primary">
+            Add transaction
+          </Link>
         </div>
       </div>
 
       {transactions.length === 0 ? (
-        <div className="card">
-          <p style={{ margin: 0, color: '#666' }}>
-            {range === 'month'
-              ? 'No transactions this month. '
-              : 'No transactions. '}
+        <div className="tx-empty-card">
+          <p className="tx-empty-text">
+            {range === 'month' ? 'No transactions this month' : 'No transactions yet'}
+          </p>
+          <p className="tx-empty-muted">
             <Link to="/add">Add one</Link>, <Link to="/sms">paste from SMS</Link>, or{' '}
             <Link to="/sheet-merge">import from sheet</Link>.
           </p>
           {range === 'month' && (
             <>
-              <p style={{ margin: '0.5rem 0 0', fontSize: '0.9rem', color: '#666' }}>
-                Switch to <strong>All time</strong> above to see all transactions, or click <strong>Fix dates if missing</strong> if you imported data that doesn’t show by month.
+              <p className="tx-empty-muted" style={{ marginTop: '0.75rem' }}>
+                Switch to <strong>All time</strong> to see all transactions, or use <strong>Fix dates</strong> if imported data doesn’t show by month.
               </p>
               {dateRange && (
-                <p style={{ margin: '0.5rem 0 0', fontSize: '0.9rem', color: '#666' }}>
-                  Your transactions span <strong>{dateRange.min_date}</strong> to <strong>{dateRange.max_date}</strong>. Pick a month in that range or use All time.
+                <p className="tx-empty-muted" style={{ marginTop: '0.35rem' }}>
+                  Your data spans <strong>{dateRange.min_date}</strong> to <strong>{dateRange.max_date}</strong>.
                 </p>
               )}
             </>
           )}
-          <p style={{ margin: '0.75rem 0 0', fontSize: '0.9rem', color: '#666' }}>
-            If you imported transactions that match when you re-paste the CSV but they don’t appear here, their dates may be in the wrong format. Click <strong>Fix dates if missing</strong> above to normalize them.
-          </p>
         </div>
       ) : (
-        <ul className="list">
-          {transactions.map((t) => (
-            <li key={t.id} className="list-item" style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', alignItems: 'stretch' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-                <span className="list-item-main" style={{ flex: 1, minWidth: 0 }}>
-                  <strong>{t.merchant || t.category?.name || '—'}</strong>
-                  <span style={{ fontSize: '0.9rem', color: '#666', marginLeft: '0.5rem' }}>
-                    {t.date}{t.time ? ` ${t.time}` : ''}
-                  </span>
-                </span>
-                <span className="list-item-amount">
-                  {t.amount.toFixed(2)} {t.currency}
-                  {t.currency !== 'EGP' && t.egp_value != null && (
-                    <span style={{ fontSize: '0.85em', color: '#666', marginLeft: '0.25rem' }}>
-                      (≈ {Number(t.egp_value).toLocaleString(undefined, { minimumFractionDigits: 2 })} EGP)
-                    </span>
-                  )}
-                </span>
-                {deleteConfirmId === t.id ? (
-                  <span style={{ display: 'flex', gap: '0.25rem', fontSize: '0.85rem' }}>
-                    <span style={{ color: '#666', marginRight: '0.25rem' }}>Delete?</span>
-                    <button
-                      type="button"
-                      className="btn btn-secondary"
-                      style={{ padding: '0.2rem 0.5rem', fontSize: '0.8rem' }}
-                      onClick={async () => {
-                        if (!token) return;
-                        setSaving(true);
-                        try {
-                          await api(`/v1/transactions/${t.id}`, { method: 'DELETE', token });
-                          setDeleteConfirmId(null);
-                          setRefreshCounter((c) => c + 1);
-                        } catch (e) {
-                          setError(e instanceof Error ? e.message : 'Delete failed');
-                        } finally {
-                          setSaving(false);
-                        }
-                      }}
-                    >
-                      Yes
-                    </button>
-                    <button
-                      type="button"
-                      className="btn"
-                      style={{ padding: '0.2rem 0.5rem', fontSize: '0.8rem' }}
-                      onClick={() => setDeleteConfirmId(null)}
-                    >
-                      No
-                    </button>
-                  </span>
+        <div className="tx-list-card">
+          <div className="tx-table-wrap">
+            <table className="tx-table">
+              <thead>
+                <tr>
+                  <th
+                    className="tx-th-sortable"
+                    onClick={() => toggleSort('date')}
+                    title="Sort by date"
+                  >
+                    Date <SortIcon column="date" />
+                  </th>
+                  <th
+                    className="tx-th-sortable"
+                    onClick={() => toggleSort('merchant')}
+                    title="Sort by merchant"
+                  >
+                    Merchant <SortIcon column="merchant" />
+                  </th>
+                  <th
+                    className="tx-th-sortable"
+                    onClick={() => toggleSort('category')}
+                    title="Sort by category"
+                  >
+                    Category <SortIcon column="category" />
+                  </th>
+                  <th
+                    className="tx-th-sortable"
+                    style={{ textAlign: 'right' }}
+                    onClick={() => toggleSort('amount')}
+                    title="Sort by amount"
+                  >
+                    Amount <SortIcon column="amount" />
+                  </th>
+                  <th style={{ width: 1 }}>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredAndSorted.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} style={{ textAlign: 'center', padding: '2rem', color: 'var(--mezan-text-muted)' }}>
+                      No transactions match your search.
+                    </td>
+                  </tr>
                 ) : (
-                  <>
-                    <button
-                      type="button"
-                      className="btn btn-secondary"
-                      style={{ padding: '0.2rem 0.5rem', fontSize: '0.8rem' }}
-                      onClick={() => setEditingTransaction(t)}
-                    >
-                      Edit
-                    </button>
-                    <button
-                      type="button"
-                      className="btn"
-                      style={{ padding: '0.2rem 0.5rem', fontSize: '0.8rem', color: '#c62828' }}
-                      onClick={() => setDeleteConfirmId(t.id)}
-                    >
-                      Delete
-                    </button>
-                  </>
+                  filteredAndSorted.map((t) => (
+                    <tr key={t.id}>
+                      <td className="tx-td-date">
+                        {t.date}{t.time ? ` · ${t.time}` : ''}
+                      </td>
+                      <td>
+                        <span className="tx-td-merchant">{t.merchant || '—'}</span>
+                        {(t.tags ?? []).length > 0 && (
+                          <div className="tx-pills" style={{ marginTop: '0.35rem' }}>
+                            {(t.tags ?? []).map((tag) => (
+                              <span key={tag.id} className="tx-pill tx-pill--tag">{tag.name}</span>
+                            ))}
+                          </div>
+                        )}
+                      </td>
+                      <td>
+                        {t.category ? (
+                          <span className="tx-pill tx-pill--cat">{t.category.name}</span>
+                        ) : (
+                          '—'
+                        )}
+                      </td>
+                      <td className="tx-td-amount">
+                        {t.amount.toFixed(2)} {t.currency}
+                        {t.currency !== 'EGP' && t.egp_value != null && (
+                          <span className="tx-td-amount-egp">
+                            ≈ {Number(t.egp_value).toLocaleString(undefined, { minimumFractionDigits: 2 })} EGP
+                          </span>
+                        )}
+                      </td>
+                      <td className="tx-td-actions">
+                        {deleteConfirmId === t.id ? (
+                          <>
+                            <span style={{ fontSize: '0.85rem', color: 'var(--mezan-text-muted)', marginRight: '0.25rem' }}>Delete?</span>
+                            <button
+                              type="button"
+                              className="tx-btn-icon tx-btn-icon--danger"
+                              onClick={async () => {
+                                if (!token) return;
+                                setSaving(true);
+                                try {
+                                  await api(`/v1/transactions/${t.id}`, { method: 'DELETE', token });
+                                  setDeleteConfirmId(null);
+                                  setRefreshCounter((c) => c + 1);
+                                } catch (e) {
+                                  setError(e instanceof Error ? e.message : 'Delete failed');
+                                } finally {
+                                  setSaving(false);
+                                }
+                              }}
+                            >
+                              Yes
+                            </button>
+                            <button
+                              type="button"
+                              className="tx-btn-icon"
+                              onClick={() => setDeleteConfirmId(null)}
+                            >
+                              No
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <button
+                              type="button"
+                              className="tx-btn-icon"
+                              onClick={() => setEditingTransaction(t)}
+                              title="Edit"
+                            >
+                              Edit
+                            </button>
+                            <button
+                              type="button"
+                              className="tx-btn-icon tx-btn-icon--danger"
+                              onClick={() => setDeleteConfirmId(t.id)}
+                              title="Delete"
+                            >
+                              Delete
+                            </button>
+                          </>
+                        )}
+                      </td>
+                    </tr>
+                  ))
                 )}
-              </div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem', alignItems: 'center' }}>
-                {t.category && (
-                  <span
-                    style={{
-                      fontSize: '0.75rem',
-                      padding: '0.15rem 0.5rem',
-                      borderRadius: 4,
-                      background: '#e3f2fd',
-                      color: '#1565c0',
-                    }}
-                  >
-                    {t.category.name}
-                  </span>
-                )}
-                {(t.tags ?? []).map((tag) => (
-                  <span
-                    key={tag.id}
-                    style={{
-                      fontSize: '0.75rem',
-                      padding: '0.15rem 0.5rem',
-                      borderRadius: 4,
-                      background: '#f3e5f5',
-                      color: '#7b1fa2',
-                    }}
-                  >
-                    {tag.name}
-                  </span>
-                ))}
-              </div>
-            </li>
-          ))}
-        </ul>
+              </tbody>
+            </table>
+          </div>
+        </div>
       )}
 
       {editingTransaction && (
