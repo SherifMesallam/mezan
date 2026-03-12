@@ -153,7 +153,7 @@ transactionsRouter.post('/', async (req: AuthRequest, res) => {
     } = req.body as {
       amount: number;
       currency?: string;
-      egp_value?: number | null;
+      egp_value?: number | string | null;
       category_id: string;
       date: string;
       time?: string;
@@ -188,7 +188,7 @@ transactionsRouter.post('/', async (req: AuthRequest, res) => {
         userId,
         amount: Number(amount),
         currency: cur,
-        egpValue: egp_value != null && egp_value !== '' ? new Decimal(Number(egp_value)) : null,
+        egpValue: egp_value != null && String(egp_value).trim() !== '' ? new Decimal(Number(egp_value)) : null,
         categoryId: category_id,
         date: dateStr,
         time: time != null ? String(time) : null,
@@ -261,7 +261,7 @@ transactionsRouter.patch('/:id', async (req: AuthRequest, res) => {
     if (time !== undefined) data.time = time ? String(time) : null;
     if (amount != null) data.amount = Number(amount);
     if (currency != null) data.currency = String(currency).toUpperCase();
-    if (egp_value !== undefined) data.egpValue = egp_value != null && egp_value !== '' ? new Decimal(Number(egp_value)) : null;
+    if (egp_value !== undefined) data.egpValue = egp_value != null && String(egp_value).trim() !== '' ? new Decimal(Number(egp_value)) : null;
     if (merchant !== undefined) data.merchant = merchant ? String(merchant) : null;
     if (location_tile !== undefined) data.locationTile = location_tile ? String(location_tile) : null;
 

@@ -4,21 +4,39 @@ Deploy the backend so it’s publicly reachable, then deploy the web app (and op
 
 ---
 
-## One-step deploy (recommended on Railway)
+## One-step deploy (Docker: backend + web in one service)
 
 A **single Dockerfile** at the repo root builds the backend and web, then runs one process: the API serves `/v1/*` and the web app (same origin). One service, one deploy.
 
-1. **Railway:** New project → **Deploy from GitHub** → select your repo.
-2. **Settings:** Leave **Root directory** empty (or `.`). Railway will use the root **Dockerfile**.
-3. **Variables:** Set only backend env vars (no `VITE_API_URL` needed):
-   - `DATABASE_URL` – from Railway Postgres (add **PostgreSQL** in the same project and link it).
-   - `JWT_SECRET` – long random string.
-   - `INGEST_TOKEN_SECRET` – long random string.
-   - Optional: `OPENAI_API_KEY`, etc.
-4. **Domain:** Generate a domain. The app is at e.g. `https://mezan-production.up.railway.app` (API at `/v1/*`, web at `/`).
-5. **First deploy:** The image runs `prisma migrate deploy` then starts the server. Ensure `backend/prisma/migrations` exists.
+### Root directory
 
-**Mobile:** Set the app’s **API server URL** to that same URL (e.g. `https://mezan-production.up.railway.app`).
+**Leave Root directory empty** (or use `.` if Render requires a value). The Dockerfile lives at the repo root, so the service must use the repo root as context. Do **not** set Root directory to `backend` or `web`.
+
+---
+
+### Railway
+
+1. New project → **Deploy from GitHub** → select your repo.
+2. **Root directory:** leave empty. Railway uses the root **Dockerfile**.
+3. **Variables:** `DATABASE_URL` (from Postgres), `JWT_SECRET`, `INGEST_TOKEN_SECRET`. Optional: `OPENAI_API_KEY`, etc.
+4. Generate a domain. App at e.g. `https://mezan-production.up.railway.app`.
+
+---
+
+### Render
+
+1. **PostgreSQL:** [Render Dashboard](https://dashboard.render.com) → **New** → **PostgreSQL**. Copy the **Internal Database URL**.
+2. **Web Service:** **New** → **Web Service** → connect your GitHub repo.
+3. **Root directory:** Leave **blank** (or `.`). The Dockerfile is at the repo root; Render must build from there.
+4. **Environment:** Choose **Docker** (Render will detect and use the root `Dockerfile`). Do not use “Node” or a custom build command.
+5. **Environment variables** (Render → your service → **Environment**):
+   - `DATABASE_URL` – paste the Internal Database URL from the Postgres service.
+   - `JWT_SECRET` – long random string (e.g. `openssl rand -hex 32`).
+   - `INGEST_TOKEN_SECRET` – long random string.
+   - Optional: `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_MODEL`.
+6. **Deploy.** Render assigns a URL like `https://mezan-xxxx.onrender.com`. API at `/v1/*`, web at `/`.
+
+**Mobile:** Set the app’s **API server URL** to that Render URL (e.g. `https://mezan-xxxx.onrender.com`).
 
 ---
 
