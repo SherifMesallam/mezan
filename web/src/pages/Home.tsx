@@ -988,7 +988,10 @@ export default function Home() {
   function isSectionVisible(sid: string): boolean {
     if (sid === 'spending-summary') return !!spendingExplanation?.explanation;
     if (sid === 'anomalies') return anomalies.length > 0;
-    if (sid === 'insights') return !!((displayInsights ?? insights) && ((displayInsights ?? insights).peak_time_of_day || (displayInsights ?? insights).peak_day_of_month || (displayInsights ?? insights).peak_day_of_week || (displayInsights ?? insights).top_vendor || (displayInsights ?? insights).top_category || (displayInsights ?? insights).spending_trend || (displayInsights ?? insights).largest_transaction));
+    if (sid === 'insights') {
+      const ins = displayInsights ?? insights;
+      return !!(ins?.peak_time_of_day || ins?.peak_day_of_month || ins?.peak_day_of_week || ins?.top_vendor || ins?.top_category || ins?.spending_trend || ins?.largest_transaction);
+    }
     if (sid === 'prediction') return !!prediction;
     return true;
   }
@@ -1340,93 +1343,124 @@ export default function Home() {
           })()}
         </CollapsibleSection>
           )}
-          {id === 'insights' && (displayInsights ?? insights) && ((displayInsights ?? insights).peak_time_of_day || (displayInsights ?? insights).peak_day_of_month || (displayInsights ?? insights).peak_day_of_week || (displayInsights ?? insights).top_vendor || (displayInsights ?? insights).top_category || (displayInsights ?? insights).spending_trend || (displayInsights ?? insights).largest_transaction) && (
+          {id === 'insights' && (() => {
+            const ins = displayInsights ?? insights;
+            return ins?.peak_time_of_day || ins?.peak_day_of_month || ins?.peak_day_of_week || ins?.top_vendor || ins?.top_category || ins?.spending_trend || ins?.largest_transaction;
+          })() && (
         <CollapsibleSection
           title="Insights"
           expanded={insightsExpanded}
           onToggle={() => setInsightsExpanded((v) => !v)}
         >
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-            {(displayInsights ?? insights).peak_time_of_day && (
-              <div className="card" style={{ padding: '0.75rem 1rem', margin: 0, background: '#f8f9fa' }}>
-                <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--mezan-text-muted)' }}>
-                  When do you usually spend more (time of day)?
-                </p>
-                <p style={{ margin: '0.35rem 0 0 0', fontWeight: 600 }}>
-                  <InsightAnswer
-                    text={`Around ${hourLabel((displayInsights ?? insights).peak_time_of_day!.hour)} (EGP ${formatAmount((displayInsights ?? insights).peak_time_of_day!.amount, 0)} in that hour)`}
-                  />
-                </p>
-              </div>
-            )}
-            {(displayInsights ?? insights).peak_day_of_month && (
-              <div className="card" style={{ padding: '0.75rem 1rem', margin: 0, background: '#f8f9fa' }}>
-                <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--mezan-text-muted)' }}>
-                  When do you usually spend more (day of month)?
-                </p>
-                <p style={{ margin: '0.35rem 0 0 0', fontWeight: 600 }}>
-                  <InsightAnswer
-                    text={`Around day ${(displayInsights ?? insights).peak_day_of_month!.day} (EGP ${formatAmount((displayInsights ?? insights).peak_day_of_month!.amount, 0)} on that day)`}
-                  />
-                </p>
-              </div>
-            )}
-            {(displayInsights ?? insights).peak_day_of_week && (
-              <div className="card" style={{ padding: '0.75rem 1rem', margin: 0, background: '#f8f9fa' }}>
-                <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--mezan-text-muted)' }}>
-                  Busiest day of week (by spend)?
-                </p>
-                <p style={{ margin: '0.35rem 0 0 0', fontWeight: 600 }}>
-                  <InsightAnswer
-                    text={`${(displayInsights ?? insights).peak_day_of_week!.day_name} — EGP ${formatAmount((displayInsights ?? insights).peak_day_of_week!.amount, 0)}`}
-                  />
-                </p>
-              </div>
-            )}
-            {(displayInsights ?? insights).top_vendor && (
-              <div className="card" style={{ padding: '0.75rem 1rem', margin: 0, background: '#f8f9fa' }}>
-                <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--mezan-text-muted)' }}>
-                  What vendor is taking most of your money?
-                </p>
-                <p style={{ margin: '0.35rem 0 0 0', fontWeight: 600 }}>
-                  <InsightAnswer text={`${(displayInsights ?? insights).top_vendor!.name} — EGP ${formatAmount((displayInsights ?? insights).top_vendor!.amount, 0)}`} />
-                </p>
-              </div>
-            )}
-            {(displayInsights ?? insights).top_category && (
-              <div className="card" style={{ padding: '0.75rem 1rem', margin: 0, background: '#f8f9fa' }}>
-                <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--mezan-text-muted)' }}>
-                  What category is taking most of your spending?
-                </p>
-                <p style={{ margin: '0.35rem 0 0 0', fontWeight: 600 }}>
-                  <InsightAnswer text={`${(displayInsights ?? insights).top_category!.name} — EGP ${formatAmount((displayInsights ?? insights).top_category!.amount, 0)}`} />
-                </p>
-              </div>
-            )}
-            {(displayInsights ?? insights).spending_trend && (
-              <div className="card" style={{ padding: '0.75rem 1rem', margin: 0, background: '#f8f9fa' }}>
-                <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--mezan-text-muted)' }}>
-                  Spending trend vs previous period?
-                </p>
-                <p style={{ margin: '0.35rem 0 0 0', fontWeight: 600 }}>
-                  <InsightAnswer
-                    text={`${(displayInsights ?? insights).spending_trend!.trend === 'up' ? 'Up' : (displayInsights ?? insights).spending_trend!.trend === 'down' ? 'Down' : 'Same'} ${(displayInsights ?? insights).spending_trend!.percent_change >= 0 ? '+' : ''}${(displayInsights ?? insights).spending_trend!.percent_change.toFixed(1)}% vs previous period`}
-                  />
-                </p>
-              </div>
-            )}
-            {(displayInsights ?? insights).largest_transaction && (
-              <div className="card" style={{ padding: '0.75rem 1rem', margin: 0, background: '#f8f9fa' }}>
-                <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--mezan-text-muted)' }}>
-                  Largest transaction?
-                </p>
-                <p style={{ margin: '0.35rem 0 0 0', fontWeight: 600 }}>
-                  <InsightAnswer
-                    text={`EGP ${formatAmount((displayInsights ?? insights).largest_transaction!.amount, 0)} — ${(displayInsights ?? insights).largest_transaction!.merchant} (${(displayInsights ?? insights).largest_transaction!.date})`}
-                  />
-                </p>
-              </div>
-            )}
+            {(() => {
+              const ins = displayInsights ?? insights;
+              if (!ins) return null;
+              const peakTime = ins.peak_time_of_day;
+              if (!peakTime) return null;
+              return (
+                <div key="peak-time" className="card" style={{ padding: '0.75rem 1rem', margin: 0, background: '#f8f9fa' }}>
+                  <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--mezan-text-muted)' }}>
+                    When do you usually spend more (time of day)?
+                  </p>
+                  <p style={{ margin: '0.35rem 0 0 0', fontWeight: 600 }}>
+                    <InsightAnswer text={`Around ${hourLabel(peakTime.hour)} (EGP ${formatAmount(peakTime.amount, 0)} in that hour)`} />
+                  </p>
+                </div>
+              );
+            })()}
+            {(() => {
+              const ins = displayInsights ?? insights;
+              const peak = ins?.peak_day_of_month;
+              if (!peak) return null;
+              return (
+                <div key="peak-month" className="card" style={{ padding: '0.75rem 1rem', margin: 0, background: '#f8f9fa' }}>
+                  <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--mezan-text-muted)' }}>
+                    When do you usually spend more (day of month)?
+                  </p>
+                  <p style={{ margin: '0.35rem 0 0 0', fontWeight: 600 }}>
+                    <InsightAnswer text={`Around day ${peak.day} (EGP ${formatAmount(peak.amount, 0)} on that day)`} />
+                  </p>
+                </div>
+              );
+            })()}
+            {(() => {
+              const ins = displayInsights ?? insights;
+              const peak = ins?.peak_day_of_week;
+              if (!peak) return null;
+              return (
+                <div key="peak-week" className="card" style={{ padding: '0.75rem 1rem', margin: 0, background: '#f8f9fa' }}>
+                  <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--mezan-text-muted)' }}>
+                    Busiest day of week (by spend)?
+                  </p>
+                  <p style={{ margin: '0.35rem 0 0 0', fontWeight: 600 }}>
+                    <InsightAnswer text={`${peak.day_name} — EGP ${formatAmount(peak.amount, 0)}`} />
+                  </p>
+                </div>
+              );
+            })()}
+            {(() => {
+              const ins = displayInsights ?? insights;
+              const v = ins?.top_vendor;
+              if (!v) return null;
+              return (
+                <div key="top-vendor" className="card" style={{ padding: '0.75rem 1rem', margin: 0, background: '#f8f9fa' }}>
+                  <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--mezan-text-muted)' }}>
+                    What vendor is taking most of your money?
+                  </p>
+                  <p style={{ margin: '0.35rem 0 0 0', fontWeight: 600 }}>
+                    <InsightAnswer text={`${v.name} — EGP ${formatAmount(v.amount, 0)}`} />
+                  </p>
+                </div>
+              );
+            })()}
+            {(() => {
+              const ins = displayInsights ?? insights;
+              const c = ins?.top_category;
+              if (!c) return null;
+              return (
+                <div key="top-category" className="card" style={{ padding: '0.75rem 1rem', margin: 0, background: '#f8f9fa' }}>
+                  <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--mezan-text-muted)' }}>
+                    What category is taking most of your spending?
+                  </p>
+                  <p style={{ margin: '0.35rem 0 0 0', fontWeight: 600 }}>
+                    <InsightAnswer text={`${c.name} — EGP ${formatAmount(c.amount, 0)}`} />
+                  </p>
+                </div>
+              );
+            })()}
+            {(() => {
+              const ins = displayInsights ?? insights;
+              const st = ins?.spending_trend;
+              if (!st) return null;
+              return (
+                <div key="spending-trend" className="card" style={{ padding: '0.75rem 1rem', margin: 0, background: '#f8f9fa' }}>
+                  <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--mezan-text-muted)' }}>
+                    Spending trend vs previous period?
+                  </p>
+                  <p style={{ margin: '0.35rem 0 0 0', fontWeight: 600 }}>
+                    <InsightAnswer
+                      text={`${st.trend === 'up' ? 'Up' : st.trend === 'down' ? 'Down' : 'Same'} ${st.percent_change >= 0 ? '+' : ''}${st.percent_change.toFixed(1)}% vs previous period`}
+                    />
+                  </p>
+                </div>
+              );
+            })()}
+            {(() => {
+              const ins = displayInsights ?? insights;
+              const lt = ins?.largest_transaction;
+              if (!lt) return null;
+              return (
+                <div key="largest" className="card" style={{ padding: '0.75rem 1rem', margin: 0, background: '#f8f9fa' }}>
+                  <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--mezan-text-muted)' }}>
+                    Largest transaction?
+                  </p>
+                  <p style={{ margin: '0.35rem 0 0 0', fontWeight: 600 }}>
+                    <InsightAnswer text={`EGP ${formatAmount(lt.amount, 0)} — ${lt.merchant} (${lt.date})`} />
+                  </p>
+                </div>
+              );
+            })()}
           </div>
         </CollapsibleSection>
           )}
