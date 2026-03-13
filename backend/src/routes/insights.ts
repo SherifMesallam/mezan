@@ -6,6 +6,66 @@ import { effectiveAmount } from '../lib/transaction';
 export const insightsRouter = Router();
 insightsRouter.use(authMiddleware);
 
+/** In-memory cache for spending-explanation and anomalies. Key -> { value, cachedAt } */
+const insightsCache = new Map<string, { value: unknown; cachedAt: number }>();
+const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 1 day
+const BIG_TX_TOP_N = 15; // Use average of top N transactions to define "big"
+const BIG_TX_FALLBACK_EGP = 1000; // Fallback when user has no/single transaction
+
+/**
+ * Computes the "big transaction" threshold for a user: average of their top 15 transactions by effective amount (EGP).
+ * Used to invalidate cache when a new transaction of that size or larger is added.
+ */
+async function getBigTransactionThreshold(userId: string): Promise<number> {
+  const tx = await prisma.transaction.findMany({
+    where: { userId },
+    select: { amount: true, egpValue: true },
+    orderBy: { date: 'desc' },
+    take: 500,
+  });
+  const amounts = tx.map((t) => effectiveAmount(t)).filter((a) => a > 0);
+  if (amounts.length === 0) return BIG_TX_FALLBACK_EGP;
+  amounts.sort((a, b) => b - a);
+  const top = amounts.slice(0, BIG_TX_TOP_N);
+  const avg = top.reduce((s, a) => s + a, 0) / top.length;
+  return Math.round(avg);
+}
+
+/**
+ * Returns true if there is any transaction in [from, to] with effective amount >= threshold
+ * that was created after sinceDate (used to invalidate cache).
+ */
+async function hasNewBigTransactionsSince(
+  userId: string,
+  from: string,
+  to: string,
+  sinceDate: Date,
+  threshold: number
+): Promise<boolean> {
+  const tx = await prisma.transaction.findMany({
+    where: {
+      userId,
+      date: { gte: from, lte: to },
+      createdAt: { gt: sinceDate },
+    },
+    select: { amount: true, egpValue: true },
+  });
+  return tx.some((t) => effectiveAmount(t) >= threshold);
+}
+
+async function isCacheValid(key: string, userId: string, from: string, to: string): Promise<boolean> {
+  const entry = insightsCache.get(key);
+  if (!entry) return false;
+  if (Date.now() - entry.cachedAt > CACHE_TTL_MS) return false;
+  const threshold = await getBigTransactionThreshold(userId);
+  const hasNew = await hasNewBigTransactionsSince(userId, from, to, new Date(entry.cachedAt), threshold);
+  return !hasNew;
+}
+
+function setCache(key: string, value: unknown): void {
+  insightsCache.set(key, { value, cachedAt: Date.now() });
+}
+
 insightsRouter.get('/summary', async (req: AuthRequest, res) => {
   try {
     const userId = req.user!.userId;
@@ -445,14 +505,19 @@ insightsRouter.get('/predict-end-of-month', async (req: AuthRequest, res) => {
   }
 });
 
+type OpenAiChatResult = { content: string | null; error?: string };
+
 /**
- * Call OpenAI chat/completions. Returns content string or null if no key / request fails.
+ * Call OpenAI chat/completions with a specific model. Returns content and optional error message.
  */
-async function openAiChat(systemPrompt: string, userPrompt: string, maxTokens = 300): Promise<string | null> {
-  const apiKey = process.env.OPENAI_API_KEY?.trim();
-  if (!apiKey) return null;
-  const baseURL = (process.env.OPENAI_BASE_URL?.trim() || 'https://api.openai.com/v1').replace(/\/$/, '');
-  const model = process.env.OPENAI_MODEL?.trim() || 'gpt-4o-mini';
+async function openAiChatWithModel(
+  systemPrompt: string,
+  userPrompt: string,
+  maxTokens: number,
+  model: string,
+  baseURL: string,
+  apiKey: string
+): Promise<OpenAiChatResult> {
   try {
     const res = await fetch(`${baseURL}/chat/completions`, {
       method: 'POST',
@@ -466,22 +531,59 @@ async function openAiChat(systemPrompt: string, userPrompt: string, maxTokens = 
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt },
         ],
-        max_tokens: maxTokens,
+        max_completion_tokens: maxTokens,
         temperature: 0.4,
       }),
     });
-    if (!res.ok) return null;
-    const data = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
-    const content = data.choices?.[0]?.message?.content?.trim();
-    return content ?? null;
-  } catch {
-    return null;
+    const body = await res.text();
+    if (!res.ok) {
+      let errMsg = `API error ${res.status}`;
+      try {
+        const errJson = JSON.parse(body) as { error?: { message?: string; code?: string } };
+        if (errJson?.error?.message) errMsg = errJson.error.message;
+        else if (errJson?.error?.code) errMsg = `${errJson.error.code}: ${errJson.error.message || body.slice(0, 200)}`;
+      } catch {
+        if (body.length) errMsg = `${errMsg}: ${body.slice(0, 200)}`;
+      }
+      console.error('[insights] OpenAI chat:', errMsg);
+      return { content: null, error: errMsg };
+    }
+    const data = JSON.parse(body) as { choices?: Array<{ message?: { content?: string } }> };
+    const content = data.choices?.[0]?.message?.content?.trim() ?? null;
+    if (!content && (data.choices?.length ?? 0) > 0) {
+      console.error('[insights] OpenAI chat: 200 OK but empty content. Body:', body.slice(0, 300));
+      return { content: null, error: 'Empty response from model (try OPENAI_MODEL=gpt-4o-mini)' };
+    }
+    return { content, error: undefined };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error('[insights] OpenAI chat exception:', e);
+    return { content: null, error: msg };
   }
+}
+
+/**
+ * Call OpenAI chat/completions. Uses OPENAI_MODEL; if that model returns empty content, retries with gpt-4o-mini.
+ */
+async function openAiChat(systemPrompt: string, userPrompt: string, maxTokens = 300): Promise<OpenAiChatResult> {
+  const apiKey = process.env.OPENAI_API_KEY?.trim();
+  if (!apiKey) return { content: null, error: 'OPENAI_API_KEY not set' };
+  let baseURL = (process.env.OPENAI_BASE_URL?.trim() || 'https://api.openai.com/v1').replace(/\/$/, '');
+  if (!baseURL.endsWith('/v1')) baseURL = `${baseURL}/v1`;
+  const model = process.env.OPENAI_MODEL?.trim() || 'gpt-4o-mini';
+  const result = await openAiChatWithModel(systemPrompt, userPrompt, maxTokens, model, baseURL, apiKey);
+  if (result.content) return result;
+  if (result.error === 'Empty response from model (try OPENAI_MODEL=gpt-4o-mini)' && model !== 'gpt-4o-mini') {
+    console.warn('[insights] Retrying with gpt-4o-mini after empty content from', model);
+    return openAiChatWithModel(systemPrompt, userPrompt, maxTokens, 'gpt-4o-mini', baseURL, apiKey);
+  }
+  return result;
 }
 
 /**
  * GET /v1/insights/spending-explanation
  * Query: from, to (YYYY-MM-DD). Returns a short natural-language summary of spending (e.g. "You spent more on food because of 3 Talabat orders").
+ * Cached for 1 day; cache invalidated when a new transaction >= 1000 EGP is added in the range.
  */
 insightsRouter.get('/spending-explanation', async (req: AuthRequest, res) => {
   try {
@@ -491,6 +593,15 @@ insightsRouter.get('/spending-explanation', async (req: AuthRequest, res) => {
     if (!from || !to || !/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
       res.status(422).json({ error: 'from and to (YYYY-MM-DD) are required' });
       return;
+    }
+
+    const cacheKey = `spending-explanation:${userId}:${from}:${to}`;
+    if (await isCacheValid(cacheKey, userId, from, to)) {
+      const entry = insightsCache.get(cacheKey);
+      if (entry) {
+        res.json(entry.value);
+        return;
+      }
     }
 
     const transactions = await prisma.transaction.findMany({
@@ -530,17 +641,25 @@ insightsRouter.get('/spending-explanation', async (req: AuthRequest, res) => {
 
     const userPrompt = `Spending from ${periodLabel}. Total: EGP ${Math.round(total)}. By category:\n${categorySummary}\n\nWrite 2-4 short sentences in second person ("You spent...") explaining where the money went. Mention specific merchants or counts when relevant (e.g. "3 Talabat orders"). Be neutral and concise. No bullet points.`;
 
-    const explanation = await openAiChat(
+    const { content: explanation, error: explanationError } = await openAiChat(
       'You are a personal finance assistant. Summarize spending in plain, friendly language.',
       userPrompt,
       250
     );
 
-    res.json({
+    const fallback = `Total spend EGP ${Math.round(total)} over this period.`;
+    const categoryNames = [...new Set([...byCategory.values()].map((d) => d.name).filter(Boolean))];
+    const merchantNames = [...new Set(transactions.map((t) => (t.merchant || '').trim()).filter((m) => m && m !== 'Unknown'))];
+    const payload = {
       from,
       to,
-      explanation: explanation || `Total spend EGP ${Math.round(total)} over this period. Add OPENAI_API_KEY for a natural-language summary.`,
-    });
+      explanation: explanation || fallback + (explanationError ? ` Summary unavailable: ${explanationError}` : ' Natural-language summary could not be generated.'),
+      explanation_error: explanationError || undefined,
+      category_names: categoryNames,
+      merchant_names: merchantNames,
+    };
+    setCache(cacheKey, payload);
+    res.json(payload);
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'Failed to get spending explanation' });
@@ -550,6 +669,7 @@ insightsRouter.get('/spending-explanation', async (req: AuthRequest, res) => {
 /**
  * GET /v1/insights/anomalies
  * Query: from, to (YYYY-MM-DD). Returns list of anomalies: unusual category spend or unusually large single transactions.
+ * Cached for 1 day; cache invalidated when a new transaction >= 1000 EGP is added in the range.
  */
 insightsRouter.get('/anomalies', async (req: AuthRequest, res) => {
   try {
@@ -559,6 +679,15 @@ insightsRouter.get('/anomalies', async (req: AuthRequest, res) => {
     if (!from || !to || !/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
       res.status(422).json({ error: 'from and to (YYYY-MM-DD) are required' });
       return;
+    }
+
+    const cacheKey = `anomalies:${userId}:${from}:${to}`;
+    if (await isCacheValid(cacheKey, userId, from, to)) {
+      const entry = insightsCache.get(cacheKey);
+      if (entry) {
+        res.json(entry.value);
+        return;
+      }
     }
 
     const fromDate = new Date(from + 'T12:00:00Z');
@@ -640,10 +769,9 @@ insightsRouter.get('/anomalies', async (req: AuthRequest, res) => {
       }
     }
 
-    const apiKey = process.env.OPENAI_API_KEY?.trim();
-    if (apiKey && anomalies.length > 0) {
+    if (anomalies.length > 0) {
       const list = anomalies.map((a) => a.message).join('\n');
-      const rewritten = await openAiChat(
+      const { content: rewritten } = await openAiChat(
         'You are a personal finance assistant. Rewrite anomaly alerts in a short, friendly way. One line per anomaly. Keep amounts and key facts.',
         `Rewrite these alerts concisely, one per line:\n${list}`,
         200
@@ -656,7 +784,9 @@ insightsRouter.get('/anomalies', async (req: AuthRequest, res) => {
       }
     }
 
-    res.json({ from, to, anomalies });
+    const payload = { from, to, anomalies };
+    setCache(cacheKey, payload);
+    res.json(payload);
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'Failed to get anomalies' });

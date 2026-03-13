@@ -94,6 +94,7 @@ class _HomeScreenState extends State<HomeScreen> {
   String _dateTo = '';
   bool _timeFilterExpanded = false;
   bool _fabExpanded = false;
+  bool _anomaliesExpanded = false;
 
   @override
   void initState() {
@@ -370,8 +371,26 @@ class _HomeScreenState extends State<HomeScreen> {
                         ),
                       ],
                     ),
+                    if (_spendingExplanation != null && (_spendingExplanation!['explanation'] as String?)?.isNotEmpty == true) ...[
+                      const SizedBox(height: 20),
+                      Text('Spending summary', style: Theme.of(context).textTheme.titleMedium),
+                      const SizedBox(height: 8),
+                      _SpendingSummarySection(explanation: _spendingExplanation!),
+                    ],
                     if (_summaryItems.isNotEmpty) ...[
-                      const SizedBox(height: 16),
+                      const SizedBox(height: 20),
+                      Text('Insights', style: Theme.of(context).textTheme.titleMedium),
+                      const SizedBox(height: 8),
+                      _InsightsSection(insights: _insights),
+                    ],
+                    if (_prediction != null) ...[
+                      const SizedBox(height: 20),
+                      Text('Prediction', style: Theme.of(context).textTheme.titleMedium),
+                      const SizedBox(height: 8),
+                      _PredictionSection(prediction: _prediction!),
+                    ],
+                    if (_summaryItems.isNotEmpty) ...[
+                      const SizedBox(height: 20),
                       Text(
                         'Where your money is going',
                         style: Theme.of(context).textTheme.titleSmall,
@@ -409,29 +428,13 @@ class _HomeScreenState extends State<HomeScreen> {
                         ],
                       ),
                     ],
-                    if (_summaryItems.isNotEmpty) ...[
+                    if (_anomalies != null && _anomalies!.isNotEmpty) ...[
                       const SizedBox(height: 20),
-                      Text('Insights', style: Theme.of(context).textTheme.titleMedium),
-                      const SizedBox(height: 8),
-                      _InsightsSection(insights: _insights),
-                      if (_spendingExplanation != null && (_spendingExplanation!['explanation'] as String?)?.isNotEmpty == true) ...[
-                        const SizedBox(height: 20),
-                        Text('Spending summary', style: Theme.of(context).textTheme.titleMedium),
-                        const SizedBox(height: 8),
-                        _SpendingSummarySection(explanation: _spendingExplanation!),
-                      ],
-                      if (_anomalies != null && _anomalies!.isNotEmpty) ...[
-                        const SizedBox(height: 20),
-                        Text('Anomaly alerts', style: Theme.of(context).textTheme.titleMedium),
-                        const SizedBox(height: 8),
-                        _AnomaliesSection(anomalies: _anomalies!),
-                      ],
-                      if (_prediction != null) ...[
-                        const SizedBox(height: 20),
-                        Text('Prediction', style: Theme.of(context).textTheme.titleMedium),
-                        const SizedBox(height: 8),
-                        _PredictionSection(prediction: _prediction!),
-                      ],
+                      _CollapsibleAnomaliesSection(
+                        anomalies: _anomalies!,
+                        expanded: _anomaliesExpanded,
+                        onToggle: () => setState(() => _anomaliesExpanded = !_anomaliesExpanded),
+                      ),
                     ],
                     const SizedBox(height: 16),
                     Row(
@@ -852,32 +855,238 @@ class _InsightRow extends StatelessWidget {
 }
 
 /// Spending summary: one card with natural-language explanation from API.
+/// Formats text with emphasized amounts (bold + primary) and one sentence per line.
 class _SpendingSummarySection extends StatelessWidget {
   const _SpendingSummarySection({required this.explanation});
 
   final Map<String, dynamic> explanation;
+
+  /// Split on sentence boundaries (period + space + capital letter) to avoid breaking decimals.
+  static List<String> _sentences(String text) {
+    final trimmed = text.trim();
+    if (trimmed.isEmpty) return [];
+    final parts = trimmed.split(RegExp(r'\.\s+(?=[A-Z])'));
+    return parts.map((s) => s.trim()).where((s) => s.isNotEmpty).toList();
+  }
+
+  static final _amountRe = RegExp(r'(EGP\s*[\d,]+(?:\.\d+)?|[-+]?\d+(?:,\d{3})*(?:\.\d+)?%?)');
+
+  /// Rich text: amounts = bold+primary, category names = bold, merchant names = underline.
+  static InlineSpan _buildRichSpans(String text, ThemeData theme, List<String> categoryNames, List<String> merchantNames) {
+    final baseStyle = theme.textTheme.bodyMedium?.copyWith(
+      height: 1.4,
+      color: theme.colorScheme.onSurface,
+    ) ?? TextStyle(height: 1.4, color: theme.colorScheme.onSurface);
+    final amountStyle = theme.textTheme.bodyMedium?.copyWith(
+      fontWeight: FontWeight.bold,
+      color: theme.colorScheme.primary,
+      height: 1.4,
+    ) ?? TextStyle(fontWeight: FontWeight.bold, color: theme.colorScheme.primary, height: 1.4);
+    final categoryStyle = theme.textTheme.bodyMedium?.copyWith(
+      fontWeight: FontWeight.bold,
+      color: theme.colorScheme.onSurface,
+      height: 1.4,
+    ) ?? TextStyle(fontWeight: FontWeight.bold, height: 1.4);
+    final merchantStyle = theme.textTheme.bodyMedium?.copyWith(
+      fontStyle: FontStyle.italic,
+      color: theme.colorScheme.onSurface,
+      height: 1.4,
+    ) ?? TextStyle(fontStyle: FontStyle.italic, height: 1.4);
+
+    final List<({int start, int end, TextStyle style})> ranges = [];
+    for (final m in _amountRe.allMatches(text)) {
+      ranges.add((start: m.start, end: m.end, style: amountStyle));
+    }
+    final catSorted = List<String>.from(categoryNames)..sort((a, b) => b.length.compareTo(a.length));
+    for (final name in catSorted) {
+      if (name.isEmpty) continue;
+      int idx = 0;
+      while (true) {
+        final i = text.toLowerCase().indexOf(name.toLowerCase(), idx);
+        if (i < 0) break;
+        ranges.add((start: i, end: i + name.length, style: categoryStyle));
+        idx = i + 1;
+      }
+    }
+    final merSorted = List<String>.from(merchantNames)..sort((a, b) => b.length.compareTo(a.length));
+    for (final name in merSorted) {
+      if (name.isEmpty) continue;
+      int idx = 0;
+      while (true) {
+        final i = text.toLowerCase().indexOf(name.toLowerCase(), idx);
+        if (i < 0) break;
+        ranges.add((start: i, end: i + name.length, style: merchantStyle));
+        idx = i + 1;
+      }
+    }
+    ranges.sort((a, b) => a.start.compareTo(b.start));
+    int lastEnd = 0;
+    final spans = <InlineSpan>[];
+    for (final r in ranges) {
+      if (r.start < lastEnd) continue;
+      if (r.start > lastEnd) {
+        spans.add(TextSpan(text: text.substring(lastEnd, r.start), style: baseStyle));
+      }
+      spans.add(TextSpan(text: text.substring(r.start, r.end), style: r.style));
+      lastEnd = r.end;
+    }
+    if (lastEnd < text.length) {
+      spans.add(TextSpan(text: text.substring(lastEnd), style: baseStyle));
+    }
+    if (spans.isEmpty) {
+      spans.add(TextSpan(text: text, style: baseStyle));
+    }
+    return TextSpan(children: spans);
+  }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final text = explanation['explanation'] as String? ?? '';
     if (text.isEmpty) return const SizedBox.shrink();
+    final categoryNames = List<String>.from((explanation['category_names'] as List<dynamic>?)?.map((e) => e.toString()) ?? []);
+    final merchantNames = List<String>.from((explanation['merchant_names'] as List<dynamic>?)?.map((e) => e.toString()) ?? []);
+    final sentences = _sentences(text);
+    final children = <Widget>[];
+    for (int i = 0; i < sentences.length; i++) {
+      if (i > 0) children.add(const SizedBox(height: 12));
+      String sentence = sentences[i];
+      if (!sentence.endsWith('.') && !sentence.endsWith('!') && !sentence.endsWith('?')) {
+        sentence = '$sentence.';
+      }
+      children.add(
+        Text.rich(
+          _buildRichSpans(sentence, theme, categoryNames, merchantNames),
+          textAlign: TextAlign.start,
+        ),
+      );
+    }
+    if (children.isEmpty) {
+      children.add(
+        Text.rich(
+          _buildRichSpans(text, theme, categoryNames, merchantNames),
+          textAlign: TextAlign.start,
+        ),
+      );
+    }
     return Card(
       color: theme.colorScheme.surface,
       child: Padding(
         padding: const EdgeInsets.all(14),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text(
-              text,
-              style: theme.textTheme.bodyMedium?.copyWith(
-                height: 1.4,
-                color: theme.colorScheme.onSurface,
+          children: children,
+        ),
+      ),
+    );
+  }
+}
+
+/// Collapsible container for anomaly alerts (collapsed by default).
+class _CollapsibleAnomaliesSection extends StatelessWidget {
+  const _CollapsibleAnomaliesSection({
+    required this.anomalies,
+    required this.expanded,
+    required this.onToggle,
+  });
+
+  final List<dynamic> anomalies;
+  final bool expanded;
+  final VoidCallback onToggle;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final count = anomalies.length;
+    final cards = <Widget>[];
+    for (int i = 0; i < anomalies.length; i++) {
+      final a = anomalies[i];
+      if (a is! Map<String, dynamic>) continue;
+      final message = a['message'] as String? ?? 'Unusual activity';
+      cards.add(
+        Card(
+          color: theme.colorScheme.errorContainer.withOpacity(0.35),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(Icons.warning_amber_rounded, size: 20, color: theme.colorScheme.error),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    message,
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: theme.colorScheme.onSurface,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+    return Card(
+      color: theme.colorScheme.surface,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          InkWell(
+            onTap: onToggle,
+            borderRadius: BorderRadius.circular(12),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          'Anomaly alerts',
+                          style: theme.textTheme.titleMedium,
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          '$count ${count == 1 ? 'alert' : 'alerts'}',
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  AnimatedRotation(
+                    turns: expanded ? 0.5 : 0,
+                    duration: const Duration(milliseconds: 200),
+                    child: Icon(
+                      Icons.expand_more,
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (expanded) ...[
+            const Divider(height: 1),
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  for (int i = 0; i < cards.length; i++) ...[
+                    if (i > 0) const SizedBox(height: 8),
+                    cards[i],
+                  ],
+                ],
               ),
             ),
           ],
-        ),
+        ],
       ),
     );
   }

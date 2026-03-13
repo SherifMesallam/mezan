@@ -361,13 +361,111 @@ textarea.input {
   color: var(--mezan-text);
 }
 
-/* Time range – segmented control + panel */
+/* Time range – collapsed by default (small), expand to set range */
 .home-timerange {
-  padding: 1.5rem;
+  padding: 0.75rem 1rem;
+}
+
+.home-timerange-collapsed {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.25rem 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+  text-align: left;
+  color: inherit;
+  font: inherit;
+}
+
+.home-timerange-collapsed:hover {
+  opacity: 0.9;
+}
+
+.home-timerange-collapsed-title {
+  flex: 1;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--mezan-text);
+}
+
+.home-timerange-collapsed-hint {
+  font-size: 0.8rem;
+  color: var(--mezan-text-muted);
+}
+
+.home-timerange-collapsed-icon {
+  font-size: 0.7rem;
+  color: var(--mezan-text-muted);
 }
 
 .home-timerange-header {
   margin-bottom: 1.25rem;
+}
+
+.home-timerange-header--compact {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.75rem;
+}
+
+.home-timerange-header--compact .home-timerange-title {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.home-timerange-close {
+  padding: 0.25rem 0.5rem;
+  font-size: 1rem;
+  line-height: 1;
+  color: var(--mezan-text-muted);
+  background: none;
+  border: none;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.home-timerange-close:hover {
+  color: var(--mezan-text);
+  background: rgba(0, 0, 0, 0.06);
+}
+
+/* Anomaly alerts – collapsible section (collapsed by default) */
+.home-anomalies-collapsible {
+  border-radius: var(--mezan-radius, 8px);
+}
+
+.home-anomalies-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+  padding: 1rem 1.25rem;
+  text-align: left;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  transition: background 0.15s ease;
+}
+
+.home-anomalies-header:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.home-anomalies-chevron {
+  display: inline-block;
+  font-size: 0.7rem;
+  color: var(--mezan-text-muted);
+  transition: transform 0.2s ease;
+}
+
+.home-timerange--expanded {
+  padding: 1rem 1.25rem;
 }
 
 .home-timerange-title {

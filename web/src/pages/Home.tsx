@@ -69,7 +69,13 @@ type Prediction = {
   worst_case_text: string;
 };
 
-type SpendingExplanation = { from: string; to: string; explanation: string };
+type SpendingExplanation = {
+  from: string;
+  to: string;
+  explanation: string;
+  category_names?: string[];
+  merchant_names?: string[];
+};
 
 type Anomaly = {
   type: string;
@@ -92,6 +98,21 @@ function monthRange(month: string): [string, string] {
   const lastDay = new Date(y, m, 0).getDate();
   const end = `${y}-${String(m).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
   return [start, end];
+}
+
+const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+function formatMonthLabel(month: string): string {
+  const [y, m] = month.split('-').map(Number);
+  return `${MONTH_NAMES[m - 1]} ${y}`;
+}
+function formatShortDate(dateStr: string): string {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  return `${d} ${MONTH_NAMES[m - 1].slice(0, 3)} ${y}`;
+}
+function timeRangeSummary(useAllTime: boolean, useDateRange: boolean, month: string, dateFrom: string, dateTo: string): string {
+  if (useAllTime) return 'Showing data for all time';
+  if (useDateRange) return `Showing data for ${formatShortDate(dateFrom)} – ${formatShortDate(dateTo)}`;
+  return `Showing data for ${formatMonthLabel(month)}`;
 }
 
 function hourLabel(hour: number): string {
@@ -119,6 +140,69 @@ function InsightAnswer({ text }: { text: string }) {
     lastIndex = m.index + m[0].length;
   }
   if (lastIndex < text.length) parts.push(text.slice(lastIndex));
+  if (parts.length === 0) return <>{text}</>;
+  return <>{parts}</>;
+}
+
+type SpanStyle = 'amount' | 'category' | 'merchant';
+
+/** Spending summary: amounts (accent+bold), category names (bold), merchant names (underline) */
+function SpendingSummaryText({
+  text,
+  categoryNames = [],
+  merchantNames = [],
+}: {
+  text: string;
+  categoryNames?: string[];
+  merchantNames?: string[];
+}) {
+  const amountRe = /(EGP\s*[\d,]+(?:\.\d+)?|[-+]?\d+(?:,\d{3})*(?:\.\d+)?%?)/g;
+  const ranges: { start: number; end: number; style: SpanStyle }[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = amountRe.exec(text)) !== null) {
+    ranges.push({ start: m.index, end: m.index + m[0].length, style: 'amount' });
+  }
+  const catSorted = [...categoryNames].sort((a, b) => b.length - a.length);
+  for (const name of catSorted) {
+    if (!name) continue;
+    let idx = 0;
+    const lower = text.toLowerCase();
+    const nameLower = name.toLowerCase();
+    while ((idx = lower.indexOf(nameLower, idx)) !== -1) {
+      ranges.push({ start: idx, end: idx + name.length, style: 'category' });
+      idx += 1;
+    }
+  }
+  const merSorted = [...merchantNames].sort((a, b) => b.length - a.length);
+  for (const name of merSorted) {
+    if (!name) continue;
+    let idx = 0;
+    const lower = text.toLowerCase();
+    const nameLower = name.toLowerCase();
+    while ((idx = lower.indexOf(nameLower, idx)) !== -1) {
+      ranges.push({ start: idx, end: idx + name.length, style: 'merchant' });
+      idx += 1;
+    }
+  }
+  ranges.sort((a, b) => a.start - b.start);
+  let lastEnd = 0;
+  const parts: React.ReactNode[] = [];
+  for (const r of ranges) {
+    if (r.start < lastEnd) continue;
+    if (r.start > lastEnd) {
+      parts.push(text.slice(lastEnd, r.start));
+    }
+    const segment = text.slice(r.start, r.end);
+    if (r.style === 'amount') {
+      parts.push(<span key={`${r.start}-a`} style={{ color: 'var(--mezan-accent)', fontWeight: 700 }}>{segment}</span>);
+    } else if (r.style === 'category') {
+      parts.push(<span key={`${r.start}-c`} style={{ fontWeight: 700 }}>{segment}</span>);
+    } else {
+      parts.push(<span key={`${r.start}-m`} style={{ fontStyle: 'italic' }}>{segment}</span>);
+    }
+    lastEnd = r.end;
+  }
+  if (lastEnd < text.length) parts.push(text.slice(lastEnd));
   if (parts.length === 0) return <>{text}</>;
   return <>{parts}</>;
 }
@@ -302,6 +386,7 @@ export default function Home() {
   const [useAllTime, setUseAllTime] = useState(false);
   const [dateFrom, setDateFrom] = useState(monthRange(currentMonth)[0]);
   const [dateTo, setDateTo] = useState(monthRange(currentMonth)[1]);
+  const [timeRangeExpanded, setTimeRangeExpanded] = useState(false);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [, setBudgetStatus] = useState<BudgetStatus[]>([]);
@@ -316,6 +401,7 @@ export default function Home() {
   const [prediction, setPrediction] = useState<Prediction | null>(null);
   const [spendingExplanation, setSpendingExplanation] = useState<SpendingExplanation | null>(null);
   const [anomalies, setAnomalies] = useState<Anomaly[]>([]);
+  const [anomaliesExpanded, setAnomaliesExpanded] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
@@ -464,100 +550,302 @@ export default function Home() {
         </div>
       </div>
 
-      {/* Time range filter */}
-      <div className="card home-timerange">
-        <div className="home-timerange-header">
-          <h2 className="home-timerange-title">Time range</h2>
-          <p className="home-timerange-desc">View transactions and spending for a specific period.</p>
-        </div>
-        <div className="home-timerange-segments" role="tablist" aria-label="Period type">
+      {/* Time range filter – collapsed by default, click to expand (same as iOS) */}
+      <div className={`card home-timerange ${timeRangeExpanded ? 'home-timerange--expanded' : ''}`}>
+        {!timeRangeExpanded ? (
           <button
             type="button"
-            role="tab"
-            aria-selected={!useAllTime && !useDateRange}
-            className={`home-timerange-segment ${!useAllTime && !useDateRange ? 'home-timerange-segment--active' : ''}`}
-            onClick={() => {
-              setUseAllTime(false);
-              setUseDateRange(false);
-            }}
+            className="home-timerange-collapsed"
+            onClick={() => setTimeRangeExpanded(true)}
+            aria-expanded="false"
+            aria-label="Set time range"
           >
-            This month
+            <span className="home-timerange-collapsed-title">
+              {timeRangeSummary(useAllTime, useDateRange, month, dateFrom, dateTo)}
+            </span>
+            <span className="home-timerange-collapsed-hint">Click to set time range</span>
+            <span className="home-timerange-collapsed-icon" aria-hidden>▼</span>
           </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={!useAllTime && useDateRange}
-            className={`home-timerange-segment ${!useAllTime && useDateRange ? 'home-timerange-segment--active' : ''}`}
-            onClick={() => {
-              setUseAllTime(false);
-              const [f, t] = monthRange(month);
-              setDateFrom(f);
-              setDateTo(t);
-              setUseDateRange(true);
-            }}
-          >
-            Custom range
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={useAllTime}
-            className={`home-timerange-segment ${useAllTime ? 'home-timerange-segment--active' : ''}`}
-            onClick={() => {
-              setUseAllTime(true);
-              setUseDateRange(false);
-            }}
-          >
-            All time
-          </button>
-        </div>
-        <div className="home-timerange-panel">
-          {!useAllTime && !useDateRange && (
-            <div className="home-timerange-panel-inner">
-              <label className="home-timerange-label">Month</label>
-              <input
-                type="month"
-                className="input home-timerange-month"
-                value={month}
-                onChange={(e) => setMonth(e.target.value)}
-                aria-label="Select month"
-              />
+        ) : (
+          <>
+            <div className="home-timerange-header home-timerange-header--compact">
+              <span className="home-timerange-title">Set time range</span>
+              <button
+                type="button"
+                className="home-timerange-close"
+                onClick={() => setTimeRangeExpanded(false)}
+                aria-label="Close"
+              >
+                ✕
+              </button>
             </div>
-          )}
-          {!useAllTime && useDateRange && (
-            <div className="home-timerange-panel-inner home-timerange-daterange">
-              <div className="home-timerange-datefield">
-                <label className="home-timerange-label">From</label>
-                <input
-                  type="date"
-                  className="input home-timerange-date"
-                  value={dateFrom}
-                  onChange={(e) => setDateFrom(e.target.value)}
-                  aria-label="Start date"
-                />
-              </div>
-              <span className="home-timerange-sep" aria-hidden>to</span>
-              <div className="home-timerange-datefield">
-                <label className="home-timerange-label">To</label>
-                <input
-                  type="date"
-                  className="input home-timerange-date"
-                  value={dateTo}
-                  onChange={(e) => setDateTo(e.target.value)}
-                  aria-label="End date"
-                />
-              </div>
+            <div className="home-timerange-segments" role="tablist" aria-label="Period type">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={!useAllTime && !useDateRange}
+                className={`home-timerange-segment ${!useAllTime && !useDateRange ? 'home-timerange-segment--active' : ''}`}
+                onClick={() => {
+                  setUseAllTime(false);
+                  setUseDateRange(false);
+                }}
+              >
+                This month
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={!useAllTime && useDateRange}
+                className={`home-timerange-segment ${!useAllTime && useDateRange ? 'home-timerange-segment--active' : ''}`}
+                onClick={() => {
+                  setUseAllTime(false);
+                  const [f, t] = monthRange(month);
+                  setDateFrom(f);
+                  setDateTo(t);
+                  setUseDateRange(true);
+                }}
+              >
+                Custom range
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={useAllTime}
+                className={`home-timerange-segment ${useAllTime ? 'home-timerange-segment--active' : ''}`}
+                onClick={() => {
+                  setUseAllTime(true);
+                  setUseDateRange(false);
+                }}
+              >
+                All time
+              </button>
             </div>
-          )}
-          {useAllTime && (
-            <p className="home-timerange-hint">
-              All transactions are shown. Budget progress below uses the current month.
-            </p>
-          )}
-        </div>
+            <div className="home-timerange-panel">
+              {!useAllTime && !useDateRange && (
+                <div className="home-timerange-panel-inner">
+                  <label className="home-timerange-label">Month</label>
+                  <input
+                    type="month"
+                    className="input home-timerange-month"
+                    value={month}
+                    onChange={(e) => setMonth(e.target.value)}
+                    aria-label="Select month"
+                  />
+                </div>
+              )}
+              {!useAllTime && useDateRange && (
+                <div className="home-timerange-panel-inner home-timerange-daterange">
+                  <div className="home-timerange-datefield">
+                    <label className="home-timerange-label">From</label>
+                    <input
+                      type="date"
+                      className="input home-timerange-date"
+                      value={dateFrom}
+                      onChange={(e) => setDateFrom(e.target.value)}
+                      aria-label="Start date"
+                    />
+                  </div>
+                  <span className="home-timerange-sep" aria-hidden>to</span>
+                  <div className="home-timerange-datefield">
+                    <label className="home-timerange-label">To</label>
+                    <input
+                      type="date"
+                      className="input home-timerange-date"
+                      value={dateTo}
+                      onChange={(e) => setDateTo(e.target.value)}
+                      aria-label="End date"
+                    />
+                  </div>
+                </div>
+              )}
+              {useAllTime && (
+                <p className="home-timerange-hint">
+                  All transactions are shown. Budget progress below uses the current month.
+                </p>
+              )}
+            </div>
+          </>
+        )}
       </div>
 
       {error && <p className="error">{error}</p>}
+
+      {/* Spending summary – first section, natural-language explanation */}
+      {spendingExplanation?.explanation && (() => {
+        const paragraphStyle: React.CSSProperties = {
+          margin: 0,
+          fontSize: '0.95rem',
+          lineHeight: 1.5,
+          color: 'var(--mezan-text)',
+          paddingLeft: '0.75rem',
+          borderLeft: '3px solid var(--mezan-accent, #0d9b9e)',
+        };
+        const sentences = spendingExplanation.explanation
+          .split(/\.\s+(?=[A-Z])/)
+          .map((s: string) => s.trim())
+          .filter(Boolean);
+        const categoryNames = spendingExplanation.category_names ?? [];
+        const merchantNames = spendingExplanation.merchant_names ?? [];
+        return (
+          <div className="card" style={{ marginBottom: '1.5rem', padding: '1rem' }}>
+            <h2 className="home-card-title" style={{ margin: 0 }}>Spending summary</h2>
+            <div style={{ marginTop: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+              {sentences.length > 0
+                ? sentences.map((sentence: string, i: number) => {
+                    const text = sentence.endsWith('.') || /[!?]$/.test(sentence) ? sentence : `${sentence}.`;
+                    return (
+                      <p key={i} style={paragraphStyle}>
+                        <SpendingSummaryText text={text} categoryNames={categoryNames} merchantNames={merchantNames} />
+                      </p>
+                    );
+                  })
+                : (
+                  <p style={{ ...paragraphStyle, borderLeft: 'none', paddingLeft: 0 }}>
+                    <SpendingSummaryText
+                      text={spendingExplanation.explanation}
+                      categoryNames={categoryNames}
+                      merchantNames={merchantNames}
+                    />
+                  </p>
+                )}
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Insights – section container, right after Spending summary */}
+      {(insights && (
+        (insights.peak_time_of_day || insights.peak_day_of_month || insights.peak_day_of_week ||
+          insights.top_vendor || insights.top_category || insights.spending_trend || insights.largest_transaction)) && (
+        <div className="card" style={{ marginTop: '1.5rem', padding: '1rem' }}>
+          <h2 className="home-card-title" style={{ margin: 0 }}>Insights</h2>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginTop: '0.75rem' }}>
+            {insights.peak_time_of_day && (
+              <div className="card" style={{ padding: '0.75rem 1rem', margin: 0, background: '#f8f9fa' }}>
+                <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--mezan-text-muted)' }}>
+                  When do you usually spend more (time of day)?
+                </p>
+                <p style={{ margin: '0.35rem 0 0 0', fontWeight: 600 }}>
+                  <InsightAnswer
+                    text={`Around ${hourLabel(insights.peak_time_of_day.hour)} (EGP ${insights.peak_time_of_day.amount.toFixed(0)} in that hour)`}
+                  />
+                </p>
+              </div>
+            )}
+            {insights.peak_day_of_month && (
+              <div className="card" style={{ padding: '0.75rem 1rem', margin: 0, background: '#f8f9fa' }}>
+                <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--mezan-text-muted)' }}>
+                  When do you usually spend more (day of month)?
+                </p>
+                <p style={{ margin: '0.35rem 0 0 0', fontWeight: 600 }}>
+                  <InsightAnswer
+                    text={`Around day ${insights.peak_day_of_month.day} (EGP ${insights.peak_day_of_month.amount.toFixed(0)} on that day)`}
+                  />
+                </p>
+              </div>
+            )}
+            {insights.peak_day_of_week && (
+              <div className="card" style={{ padding: '0.75rem 1rem', margin: 0, background: '#f8f9fa' }}>
+                <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--mezan-text-muted)' }}>
+                  Busiest day of week (by spend)?
+                </p>
+                <p style={{ margin: '0.35rem 0 0 0', fontWeight: 600 }}>
+                  <InsightAnswer
+                    text={`${insights.peak_day_of_week.day_name} — EGP ${insights.peak_day_of_week.amount.toFixed(0)}`}
+                  />
+                </p>
+              </div>
+            )}
+            {insights.top_vendor && (
+              <div className="card" style={{ padding: '0.75rem 1rem', margin: 0, background: '#f8f9fa' }}>
+                <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--mezan-text-muted)' }}>
+                  What vendor is taking most of your money?
+                </p>
+                <p style={{ margin: '0.35rem 0 0 0', fontWeight: 600 }}>
+                  <InsightAnswer text={`${insights.top_vendor.name} — EGP ${insights.top_vendor.amount.toFixed(0)}`} />
+                </p>
+              </div>
+            )}
+            {insights.top_category && (
+              <div className="card" style={{ padding: '0.75rem 1rem', margin: 0, background: '#f8f9fa' }}>
+                <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--mezan-text-muted)' }}>
+                  What category is taking most of your spending?
+                </p>
+                <p style={{ margin: '0.35rem 0 0 0', fontWeight: 600 }}>
+                  <InsightAnswer text={`${insights.top_category.name} — EGP ${insights.top_category.amount.toFixed(0)}`} />
+                </p>
+              </div>
+            )}
+            {insights.spending_trend && (
+              <div className="card" style={{ padding: '0.75rem 1rem', margin: 0, background: '#f8f9fa' }}>
+                <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--mezan-text-muted)' }}>
+                  Spending trend vs previous period?
+                </p>
+                <p style={{ margin: '0.35rem 0 0 0', fontWeight: 600 }}>
+                  <InsightAnswer
+                    text={`${insights.spending_trend.trend === 'up' ? 'Up' : insights.spending_trend.trend === 'down' ? 'Down' : 'Same'} ${insights.spending_trend.percent_change >= 0 ? '+' : ''}${insights.spending_trend.percent_change.toFixed(1)}% vs previous period`}
+                  />
+                </p>
+              </div>
+            )}
+            {insights.largest_transaction && (
+              <div className="card" style={{ padding: '0.75rem 1rem', margin: 0, background: '#f8f9fa' }}>
+                <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--mezan-text-muted)' }}>
+                  Largest transaction?
+                </p>
+                <p style={{ margin: '0.35rem 0 0 0', fontWeight: 600 }}>
+                  <InsightAnswer
+                    text={`EGP ${insights.largest_transaction.amount.toFixed(0)} — ${insights.largest_transaction.merchant} (${insights.largest_transaction.date})`}
+                  />
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+      ))}
+
+      {/* Prediction – right after Insights */}
+      {prediction && (
+        <div className="card" style={{ marginTop: '1.5rem', padding: '1rem' }}>
+          <h2 className="home-card-title" style={{ margin: 0 }}>Prediction</h2>
+          <p style={{ margin: '0.5rem 0 0 0', fontSize: '0.9rem', color: 'var(--mezan-text-muted)' }}>
+            Given current spending, how much total spend is predicted by end of month?
+          </p>
+          <p style={{ margin: '0.25rem 0 0 0', fontSize: '0.85rem' }}>
+            Spent so far: <span style={{ fontWeight: 600, color: 'var(--mezan-accent)' }}>EGP {prediction.spent_so_far.toFixed(0)}</span>
+            {' · '}{prediction.days_remaining} days left in month
+          </p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginTop: '1rem' }}>
+            <div className="card" style={{ padding: '0.75rem 1rem', margin: 0, background: '#e8f5e9' }}>
+              <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--mezan-text-muted)' }}>Optimistic prediction</p>
+              <p style={{ margin: '0.35rem 0 0 0', fontWeight: 700, fontSize: '1.1rem', color: 'var(--mezan-accent)' }}>
+                EGP {prediction.optimistic_predicted_total.toFixed(0)}
+              </p>
+              {prediction.optimistic_text && (
+                <p style={{ margin: '0.35rem 0 0 0', fontSize: '0.85rem', lineHeight: 1.35 }}>{prediction.optimistic_text}</p>
+              )}
+            </div>
+            <div className="card" style={{ padding: '0.75rem 1rem', margin: 0, background: '#e3f2fd' }}>
+              <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--mezan-text-muted)' }}>More likely</p>
+              <p style={{ margin: '0.35rem 0 0 0', fontWeight: 700, fontSize: '1.1rem', color: 'var(--mezan-success)' }}>
+                EGP {prediction.more_likely_predicted_total.toFixed(0)}
+              </p>
+              {prediction.more_likely_text && (
+                <p style={{ margin: '0.35rem 0 0 0', fontSize: '0.85rem', lineHeight: 1.35 }}>{prediction.more_likely_text}</p>
+              )}
+            </div>
+            <div className="card" style={{ padding: '0.75rem 1rem', margin: 0, background: '#ffebee' }}>
+              <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--mezan-text-muted)' }}>Worst case</p>
+              <p style={{ margin: '0.35rem 0 0 0', fontWeight: 700, fontSize: '1.1rem', color: 'var(--mezan-danger)' }}>
+                EGP {prediction.worst_case_predicted_total.toFixed(0)}
+              </p>
+              {prediction.worst_case_text && (
+                <p style={{ margin: '0.35rem 0 0 0', fontSize: '0.85rem', lineHeight: 1.35 }}>{prediction.worst_case_text}</p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Pie chart – full width row */}
       <div className="home-chart-row">
@@ -733,174 +1021,53 @@ export default function Home() {
         )}
       </div>
 
-      {/* Insights – section container with white bg, one card per insight inside */}
-      {(insights && (
-        (insights.peak_time_of_day || insights.peak_day_of_month || insights.peak_day_of_week ||
-          insights.top_vendor || insights.top_category || insights.spending_trend || insights.largest_transaction)) && (
-        <div className="card" style={{ marginTop: '1.5rem', padding: '1rem' }}>
-          <h2 className="home-card-title" style={{ margin: 0 }}>Insights</h2>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginTop: '0.75rem' }}>
-            {insights.peak_time_of_day && (
-              <div className="card" style={{ padding: '0.75rem 1rem', margin: 0, background: '#f8f9fa' }}>
-                <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--mezan-text-muted)' }}>
-                  When do you usually spend more (time of day)?
-                </p>
-                <p style={{ margin: '0.35rem 0 0 0', fontWeight: 600 }}>
-                  <InsightAnswer
-                    text={`Around ${hourLabel(insights.peak_time_of_day.hour)} (EGP ${insights.peak_time_of_day.amount.toFixed(0)} in that hour)`}
-                  />
-                </p>
-              </div>
-            )}
-            {insights.peak_day_of_month && (
-              <div className="card" style={{ padding: '0.75rem 1rem', margin: 0, background: '#f8f9fa' }}>
-                <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--mezan-text-muted)' }}>
-                  When do you usually spend more (day of month)?
-                </p>
-                <p style={{ margin: '0.35rem 0 0 0', fontWeight: 600 }}>
-                  <InsightAnswer
-                    text={`Around day ${insights.peak_day_of_month.day} (EGP ${insights.peak_day_of_month.amount.toFixed(0)} on that day)`}
-                  />
-                </p>
-              </div>
-            )}
-            {insights.peak_day_of_week && (
-              <div className="card" style={{ padding: '0.75rem 1rem', margin: 0, background: '#f8f9fa' }}>
-                <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--mezan-text-muted)' }}>
-                  Busiest day of week (by spend)?
-                </p>
-                <p style={{ margin: '0.35rem 0 0 0', fontWeight: 600 }}>
-                  <InsightAnswer
-                    text={`${insights.peak_day_of_week.day_name} — EGP ${insights.peak_day_of_week.amount.toFixed(0)}`}
-                  />
-                </p>
-              </div>
-            )}
-            {insights.top_vendor && (
-              <div className="card" style={{ padding: '0.75rem 1rem', margin: 0, background: '#f8f9fa' }}>
-                <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--mezan-text-muted)' }}>
-                  What vendor is taking most of your money?
-                </p>
-                <p style={{ margin: '0.35rem 0 0 0', fontWeight: 600 }}>
-                  <InsightAnswer text={`${insights.top_vendor.name} — EGP ${insights.top_vendor.amount.toFixed(0)}`} />
-                </p>
-              </div>
-            )}
-            {insights.top_category && (
-              <div className="card" style={{ padding: '0.75rem 1rem', margin: 0, background: '#f8f9fa' }}>
-                <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--mezan-text-muted)' }}>
-                  What category is taking most of your spending?
-                </p>
-                <p style={{ margin: '0.35rem 0 0 0', fontWeight: 600 }}>
-                  <InsightAnswer text={`${insights.top_category.name} — EGP ${insights.top_category.amount.toFixed(0)}`} />
-                </p>
-              </div>
-            )}
-            {insights.spending_trend && (
-              <div className="card" style={{ padding: '0.75rem 1rem', margin: 0, background: '#f8f9fa' }}>
-                <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--mezan-text-muted)' }}>
-                  Spending trend vs previous period?
-                </p>
-                <p style={{ margin: '0.35rem 0 0 0', fontWeight: 600 }}>
-                  <InsightAnswer
-                    text={`${insights.spending_trend.trend === 'up' ? 'Up' : insights.spending_trend.trend === 'down' ? 'Down' : 'Same'} ${insights.spending_trend.percent_change >= 0 ? '+' : ''}${insights.spending_trend.percent_change.toFixed(1)}% vs previous period`}
-                  />
-                </p>
-              </div>
-            )}
-            {insights.largest_transaction && (
-              <div className="card" style={{ padding: '0.75rem 1rem', margin: 0, background: '#f8f9fa' }}>
-                <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--mezan-text-muted)' }}>
-                  Largest transaction?
-                </p>
-                <p style={{ margin: '0.35rem 0 0 0', fontWeight: 600 }}>
-                  <InsightAnswer
-                    text={`EGP ${insights.largest_transaction.amount.toFixed(0)} — ${insights.largest_transaction.merchant} (${insights.largest_transaction.date})`}
-                  />
-                </p>
-              </div>
-            )}
-          </div>
-        </div>
-      ))}
-
-      {/* Spending summary – natural-language explanation */}
-      {spendingExplanation?.explanation && (
-        <div className="card" style={{ marginTop: '1.5rem', padding: '1rem' }}>
-          <h2 className="home-card-title" style={{ margin: 0 }}>Spending summary</h2>
-          <p style={{ margin: '0.75rem 0 0 0', fontSize: '0.95rem', lineHeight: 1.5, color: 'var(--mezan-text)' }}>
-            {spendingExplanation.explanation}
-          </p>
-        </div>
-      )}
-
-      {/* Anomaly alerts */}
+      {/* Anomaly alerts – collapsible container, collapsed by default */}
       {anomalies.length > 0 && (
-        <div className="card" style={{ marginTop: '1.5rem', padding: '1rem' }}>
-          <h2 className="home-card-title" style={{ margin: 0 }}>Anomaly alerts</h2>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginTop: '0.75rem' }}>
-            {anomalies.map((a, i) => (
-              <div
-                key={i}
-                className="card"
-                style={{
-                  padding: '0.75rem 1rem',
-                  margin: 0,
-                  background: 'rgba(211, 47, 47, 0.08)',
-                  borderLeft: '3px solid var(--mezan-error, #d32f2f)',
-                  display: 'flex',
-                  alignItems: 'flex-start',
-                  gap: '0.5rem',
-                }}
-              >
-                <span style={{ color: 'var(--mezan-error, #d32f2f)', fontSize: '1.1rem' }}>⚠</span>
-                <span style={{ fontSize: '0.9rem', lineHeight: 1.4 }}>{a.message}</span>
+        <div className="card home-anomalies-collapsible" style={{ marginTop: '1.5rem', padding: 0, overflow: 'hidden' }}>
+          <button
+            type="button"
+            className="home-anomalies-header"
+            onClick={() => setAnomaliesExpanded((v) => !v)}
+            aria-expanded={anomaliesExpanded}
+          >
+            <div style={{ textAlign: 'left', flex: 1 }}>
+              <h2 className="home-card-title" style={{ margin: 0 }}>Anomaly alerts</h2>
+              <p style={{ margin: '0.2rem 0 0 0', fontSize: '0.8rem', color: 'var(--mezan-text-muted)', fontWeight: 400 }}>
+                {anomalies.length} {anomalies.length === 1 ? 'alert' : 'alerts'}
+              </p>
+            </div>
+            <span
+              className="home-anomalies-chevron"
+              style={{ transform: anomaliesExpanded ? 'rotate(180deg)' : 'rotate(0deg)' }}
+              aria-hidden
+            >
+              ▼
+            </span>
+          </button>
+          {anomaliesExpanded && (
+            <div style={{ padding: '0 1rem 1rem', borderTop: '1px solid var(--mezan-border, #eee)' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginTop: '0.75rem' }}>
+                {anomalies.map((a, i) => (
+                  <div
+                    key={i}
+                    className="card"
+                    style={{
+                      padding: '0.75rem 1rem',
+                      margin: 0,
+                      background: 'rgba(211, 47, 47, 0.08)',
+                      borderLeft: '3px solid var(--mezan-error, #d32f2f)',
+                      display: 'flex',
+                      alignItems: 'flex-start',
+                      gap: '0.5rem',
+                    }}
+                  >
+                    <span style={{ color: 'var(--mezan-error, #d32f2f)', fontSize: '1.1rem' }}>⚠</span>
+                    <span style={{ fontSize: '0.9rem', lineHeight: 1.4 }}>{a.message}</span>
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Prediction – section container; intro text then 3 colored cards */}
-      {prediction && (
-        <div className="card" style={{ marginTop: '1.5rem', padding: '1rem' }}>
-          <h2 className="home-card-title" style={{ margin: 0 }}>Prediction</h2>
-          <p style={{ margin: '0.5rem 0 0 0', fontSize: '0.9rem', color: 'var(--mezan-text-muted)' }}>
-            Given current spending, how much total spend is predicted by end of month?
-          </p>
-          <p style={{ margin: '0.25rem 0 0 0', fontSize: '0.85rem' }}>
-            Spent so far: <span style={{ fontWeight: 600, color: 'var(--mezan-accent)' }}>EGP {prediction.spent_so_far.toFixed(0)}</span>
-            {' · '}{prediction.days_remaining} days left in month
-          </p>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginTop: '1rem' }}>
-            <div className="card" style={{ padding: '0.75rem 1rem', margin: 0, background: '#e8f5e9' }}>
-              <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--mezan-text-muted)' }}>Optimistic prediction</p>
-              <p style={{ margin: '0.35rem 0 0 0', fontWeight: 700, fontSize: '1.1rem', color: 'var(--mezan-accent)' }}>
-                EGP {prediction.optimistic_predicted_total.toFixed(0)}
-              </p>
-              {prediction.optimistic_text && (
-                <p style={{ margin: '0.35rem 0 0 0', fontSize: '0.85rem', lineHeight: 1.35 }}>{prediction.optimistic_text}</p>
-              )}
             </div>
-            <div className="card" style={{ padding: '0.75rem 1rem', margin: 0, background: '#e3f2fd' }}>
-              <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--mezan-text-muted)' }}>More likely</p>
-              <p style={{ margin: '0.35rem 0 0 0', fontWeight: 700, fontSize: '1.1rem', color: 'var(--mezan-success)' }}>
-                EGP {prediction.more_likely_predicted_total.toFixed(0)}
-              </p>
-              {prediction.more_likely_text && (
-                <p style={{ margin: '0.35rem 0 0 0', fontSize: '0.85rem', lineHeight: 1.35 }}>{prediction.more_likely_text}</p>
-              )}
-            </div>
-            <div className="card" style={{ padding: '0.75rem 1rem', margin: 0, background: '#ffebee' }}>
-              <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--mezan-text-muted)' }}>Worst case</p>
-              <p style={{ margin: '0.35rem 0 0 0', fontWeight: 700, fontSize: '1.1rem', color: 'var(--mezan-danger)' }}>
-                EGP {prediction.worst_case_predicted_total.toFixed(0)}
-              </p>
-              {prediction.worst_case_text && (
-                <p style={{ margin: '0.35rem 0 0 0', fontSize: '0.85rem', lineHeight: 1.35 }}>{prediction.worst_case_text}</p>
-              )}
-            </div>
-          </div>
+          )}
         </div>
       )}
 
