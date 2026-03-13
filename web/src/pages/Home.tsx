@@ -1,17 +1,5 @@
 import { useState, useEffect, useMemo, Children, isValidElement, cloneElement, type ReactElement } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import {
-  PieChart,
-  Pie,
-  Cell,
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  Tooltip,
-  Legend,
-  ResponsiveContainer,
-} from 'recharts';
 import { api } from '../api';
 import { getStoredToken } from '../App';
 
@@ -46,8 +34,6 @@ type BudgetStatus = {
   remaining: number;
   overspent: boolean;
 };
-
-type SummaryItem = { key: string; total: number };
 
 type BudgetByCategoryItem = {
   category_id: string;
@@ -97,19 +83,12 @@ type Anomaly = {
   transaction_id?: string;
 };
 
-const PIE_COLORS = [
-  '#0d9b9e', '#0b8588', '#2196F3', '#E91E63', '#795548', '#9E9E9E', '#FF9800', '#4CAF50',
-  '#607D8B', '#00BCD4', '#FF5722', '#3F51B5', '#009688', '#8BC34A', '#03A9F4', '#CDDC39',
-];
-
 const HOME_SECTION_ORDER_KEY = 'mezan_home_section_order';
 const DEFAULT_SECTION_ORDER = [
   'spending-summary',
   'anomalies',
   'insights',
   'prediction',
-  'spending-by-category',
-  'budget-vs-actual',
   'summary-by-category',
   'recent-transactions',
 ];
@@ -463,36 +442,6 @@ function SpendingSummaryText({
   return <>{parts}</>;
 }
 
-/** Custom pie label placed further from the pie so label lines are longer */
-function PieLabelWithLongLine(props: {
-  cx?: number;
-  cy?: number;
-  midAngle?: number;
-  outerRadius?: number;
-  name?: string;
-  percent?: number;
-}) {
-  const { cx = 0, cy = 0, midAngle = 0, outerRadius = 100, name = '', percent = 0 } = props;
-  const rad = (-midAngle * Math.PI) / 180;
-  const labelRadius = outerRadius + 78;
-  const x = cx + labelRadius * Math.cos(rad);
-  const y = cy + labelRadius * Math.sin(rad);
-  const pctText = (percent * 100).toFixed(0);
-  const labelText = percent >= 0.02 ? `${name} ${pctText}%` : `${pctText}%`;
-  return (
-    <text
-      x={x}
-      y={y}
-      fill="var(--mezan-text)"
-      textAnchor={x >= cx ? 'start' : 'end'}
-      dominantBaseline="central"
-      fontSize={percent >= 0.02 ? 12 : 11}
-    >
-      {labelText}
-    </text>
-  );
-}
-
 function EditTransactionModal({
   transaction,
   categories,
@@ -646,7 +595,6 @@ export default function Home() {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [, setBudgetStatus] = useState<BudgetStatus[]>([]);
-  const [summary, setSummary] = useState<SummaryItem[]>([]);
   const [budgetByCategory, setBudgetByCategory] = useState<{
     items: BudgetByCategoryItem[];
     total_budget: number;
@@ -661,8 +609,6 @@ export default function Home() {
   const [spendingSummaryExpanded, setSpendingSummaryExpanded] = useState(true);
   const [insightsExpanded, setInsightsExpanded] = useState(true);
   const [predictionExpanded, setPredictionExpanded] = useState(true);
-  const [pieChartExpanded, setPieChartExpanded] = useState(true);
-  const [barChartExpanded, setBarChartExpanded] = useState(true);
   const [summaryByCategoryExpanded, setSummaryByCategoryExpanded] = useState(true);
   const [recentTransactionsExpanded, setRecentTransactionsExpanded] = useState(true);
   const [loading, setLoading] = useState(true);
@@ -699,21 +645,25 @@ export default function Home() {
     if (!token) return;
     setLoading(true);
     setError('');
+    const apiQuery: Record<string, string> = { from, to };
+    if (debouncedSearchForApi.trim()) apiQuery.q = debouncedSearchForApi.trim();
     const insightsPromise = api<SpendingPatterns>('/v1/insights/spending-patterns', {
       token,
-      query: { from, to },
+      query: apiQuery,
     }).catch(() => null);
     const explanationPromise = api<SpendingExplanation>('/v1/insights/spending-explanation', {
       token,
-      query: { from, to },
+      query: apiQuery,
     }).catch(() => null);
     const anomaliesPromise = api<{ anomalies: Anomaly[] }>('/v1/insights/anomalies', {
       token,
-      query: { from, to },
+      query: apiQuery,
     }).catch(() => ({ anomalies: [] }));
+    const predictionQuery: Record<string, string> = { month };
+    if (debouncedSearchForApi.trim()) predictionQuery.q = debouncedSearchForApi.trim();
     const predictionPromise = api<Prediction>('/v1/insights/predict-end-of-month', {
       token,
-      query: debouncedSearchForApi.trim() ? { month, q: debouncedSearchForApi.trim() } : { month },
+      query: predictionQuery,
     }).catch(() => null);
 
     Promise.all([
@@ -725,10 +675,6 @@ export default function Home() {
       api<{ budget_status: BudgetStatus[] }>('/v1/insights/budget-status', {
         token,
         query: { month: useAllTime ? currentMonth : month },
-      }),
-      api<{ summary: SummaryItem[] }>('/v1/insights/summary', {
-        token,
-        query: { from, to, group_by: 'category' },
       }),
       api<{
         items: BudgetByCategoryItem[];
@@ -744,11 +690,10 @@ export default function Home() {
       explanationPromise,
       anomaliesPromise,
     ])
-      .then(([txRes, catRes, budgetRes, summaryRes, byCatRes, insightsRes, predictionRes, explanationRes, anomaliesRes]) => {
+      .then(([txRes, catRes, budgetRes, byCatRes, insightsRes, predictionRes, explanationRes, anomaliesRes]) => {
         setTransactions(txRes.transactions || []);
         setCategories(catRes.categories || []);
         setBudgetStatus(budgetRes.budget_status || []);
-        setSummary(summaryRes.summary || []);
         setBudgetByCategory(byCatRes);
         setInsights(insightsRes ?? null);
         setPrediction(predictionRes ?? null);
@@ -765,7 +710,6 @@ export default function Home() {
     return () => clearTimeout(t);
   }, [deletedForUndo]);
 
-  const nameById = Object.fromEntries((budgetByCategory?.items || []).map((r) => [r.category_id, r.category_name]));
   const merchantCount = useMemo(() => {
     const m = new Map<string, number>();
     for (const t of transactions) {
@@ -796,25 +740,23 @@ export default function Home() {
 
   const hasTransactionFilter = searchQuery.trim() !== '' || quickFilter === 'uncategorized' || quickFilter === 'recurring';
 
+  const allTagNames = useMemo(
+    () => [...new Set(transactions.flatMap((t) => (t.tags || []).map((tag) => tag.name)))],
+    [transactions]
+  );
+  const isTagSearch =
+    searchQuery.trim() !== '' &&
+    allTagNames.some((name) => name.toLowerCase().includes(searchQuery.trim().toLowerCase()));
+  const hideBudgetAndSummary = isTagSearch || quickFilter === 'uncategorized';
+
+  const categoryIdsFromFiltered = useMemo(
+    () => new Set(filteredTransactions.map((t) => t.category_id).filter(Boolean) as string[]),
+    [filteredTransactions]
+  );
+
   function effectiveAmount(t: Transaction): number {
     return t.egp_value != null ? t.egp_value : t.amount;
   }
-
-  const filteredSummaryFromTx = useMemo(() => {
-    if (!hasTransactionFilter) return null;
-    const byCat = new Map<string, { total: number; name: string }>();
-    for (const t of filteredTransactions) {
-      const cid = t.category_id || t.category?.id || 'uncategorized';
-      const name = t.category?.name || 'Uncategorized';
-      const amt = effectiveAmount(t);
-      const cur = byCat.get(cid);
-      if (!cur) byCat.set(cid, { total: amt, name });
-      else {
-        cur.total += amt;
-      }
-    }
-    return Array.from(byCat.entries()).map(([key, v]) => ({ key, total: Math.round(v.total * 100) / 100, name: v.name }));
-  }, [hasTransactionFilter, filteredTransactions]);
 
   const filteredActualByCategory = useMemo(() => {
     if (!hasTransactionFilter) return null;
@@ -826,18 +768,6 @@ export default function Home() {
     }
     return m;
   }, [hasTransactionFilter, filteredTransactions]);
-
-  const pieData = hasTransactionFilter && filteredSummaryFromTx && filteredSummaryFromTx.length > 0
-    ? filteredSummaryFromTx.map((s, i) => ({
-        name: s.name,
-        value: s.total,
-        color: PIE_COLORS[i % PIE_COLORS.length],
-      }))
-    : summary.map((s, i) => ({
-        name: nameById[s.key] || s.key,
-        value: s.total,
-        color: PIE_COLORS[i % PIE_COLORS.length],
-      }));
 
   const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
   const filteredInsights = useMemo((): SpendingPatterns | null => {
@@ -919,12 +849,27 @@ export default function Home() {
     return rows;
   }, [budgetByCategory?.items, quickFilter, hasTransactionFilter, filteredActualByCategory]);
 
-  const barData = filteredBudgetItems.map((row) => ({
-    name: row.category_name.length > 12 ? row.category_name.slice(0, 11) + '…' : row.category_name,
-    fullName: row.category_name,
-    budget: row.budget,
-    actual: row.actual,
-  }));
+  const filteredBudgetItemsForDisplay = useMemo(() => {
+    if (hideBudgetAndSummary) return [];
+    if (hasTransactionFilter && categoryIdsFromFiltered.size > 0) {
+      return filteredBudgetItems.filter((row) => categoryIdsFromFiltered.has(row.category_id));
+    }
+    return filteredBudgetItems;
+  }, [hideBudgetAndSummary, hasTransactionFilter, categoryIdsFromFiltered, filteredBudgetItems]);
+
+  const filteredTotalsForSummary = useMemo(() => {
+    if (hasTransactionFilter && !hideBudgetAndSummary && filteredBudgetItemsForDisplay.length > 0) {
+      return filteredBudgetItemsForDisplay.reduce(
+        (acc, row) => ({
+          budget: acc.budget + row.budget,
+          actual: acc.actual + row.actual,
+          difference: acc.difference + row.difference,
+        }),
+        { budget: 0, actual: 0, difference: 0 }
+      );
+    }
+    return null;
+  }, [hasTransactionFilter, hideBudgetAndSummary, filteredBudgetItemsForDisplay]);
 
   const totalsForDisplay = quickFilter === 'over_budget'
     ? filteredBudgetItems.reduce(
@@ -945,8 +890,15 @@ export default function Home() {
   const totalRemaining = totalBudget - fullTotalSpent;
   const exceedsBudget = totalBudget > 0 && fullTotalSpent > totalBudget;
 
+  const filteredBudgetRemaining =
+    hideBudgetAndSummary
+      ? 0
+      : hasTransactionFilter && filteredBudgetItemsForDisplay.length > 0
+        ? filteredBudgetItemsForDisplay.reduce((s, r) => s + r.difference, 0)
+        : totalRemaining;
+
   const sortedSummaryItems = (() => {
-    const items = filteredBudgetItems;
+    const items = filteredBudgetItemsForDisplay;
     if (!summarySortKey) return items;
     const mult = summarySortDir === 'asc' ? 1 : -1;
     return [...items].sort((a, b) => {
@@ -993,6 +945,11 @@ export default function Home() {
       return !!(ins?.peak_time_of_day || ins?.peak_day_of_month || ins?.peak_day_of_week || ins?.top_vendor || ins?.top_category || ins?.spending_trend || ins?.largest_transaction);
     }
     if (sid === 'prediction') return !!prediction;
+    if (sid === 'summary-by-category') {
+      if (hideBudgetAndSummary) return false;
+      if (hasTransactionFilter && filteredBudgetItemsForDisplay.length === 0) return false;
+      return true;
+    }
     return true;
   }
 
@@ -1002,9 +959,6 @@ export default function Home() {
 
   return (
     <>
-      <h1 className="page-title">Home</h1>
-      <p className="page-subtitle">Your spending this month</p>
-
       {/* Time range filter – at the very top */}
       <div className={`card home-timerange ${timeRangeExpanded ? 'home-timerange--expanded' : ''}`}>
         {!timeRangeExpanded ? (
@@ -1225,14 +1179,14 @@ export default function Home() {
       {/* Filtered view banner */}
       {hasTransactionFilter && (
         <p className="home-filtered-banner" role="status">
-          Showing filtered view — totals, pie chart, budget table, and insights reflect your search/filters.
-          {searchQuery.trim() ? ' Predictions also reflect your search.' : ''}
-          {' '}Spending summary and anomalies use all transactions in the period.
+          Showing filtered view — totals, budget table, and insights reflect your search/filters.
+          {searchQuery.trim() ? ' Predictions, spending summary, and anomalies reflect your search.' : ''}
+          {isTagSearch ? ' Budget and category summary are hidden for tag searches.' : ''}
         </p>
       )}
 
       {/* Summary cards */}
-      <div className={`home-summary-cards ${prediction ? 'home-summary-cards--three' : ''}`}>
+      <div className={`home-summary-cards ${prediction && !hideBudgetAndSummary ? 'home-summary-cards--three' : ''}`}>
         <div className="home-summary-card">
           <span className="home-summary-card-label">{hasTransactionFilter ? 'Filtered spent' : 'Total spent'}</span>
           <span
@@ -1242,17 +1196,19 @@ export default function Home() {
             EGP {formatAmount(totalSpent)}
           </span>
         </div>
+        {!hideBudgetAndSummary && (
         <div className="home-summary-card">
           <span className="home-summary-card-label">
-            Budget remaining{hasTransactionFilter ? ' (all)' : ''}
+            Budget remaining{hasTransactionFilter ? ' (filtered)' : ''}
           </span>
           <span
             className="home-summary-card-value"
-            style={{ color: totalRemaining >= 0 ? 'var(--mezan-success)' : 'var(--mezan-danger)' }}
+            style={{ color: filteredBudgetRemaining >= 0 ? 'var(--mezan-success)' : 'var(--mezan-danger)' }}
           >
-            EGP {formatAmount(totalRemaining)}
+            EGP {formatAmount(filteredBudgetRemaining)}
           </span>
         </div>
+        )}
         {prediction && (
           <div className="home-summary-card home-summary-card--predictions">
             <span className="home-summary-card-label">Predictions</span>
@@ -1515,72 +1471,6 @@ export default function Home() {
           </div>
         </CollapsibleSection>
           )}
-          {id === 'spending-by-category' && (
-      <CollapsibleSection
-        title="Spending by category"
-        expanded={pieChartExpanded}
-        onToggle={() => setPieChartExpanded((v) => !v)}
-      >
-      <div className="home-chart-row">
-        <div className="card home-chart-card home-chart-card--pie" style={{ margin: 0 }}>
-          {pieData.length === 0 ? (
-            <p className="home-chart-empty">No spending this month.</p>
-          ) : (
-            <ResponsiveContainer width="100%" height={520}>
-              <PieChart>
-                <Pie
-                  data={pieData}
-                  cx="50%"
-                  cy="50%"
-                  innerRadius={80}
-                  outerRadius={140}
-                  paddingAngle={2}
-                  dataKey="value"
-                  nameKey="name"
-                  label={<PieLabelWithLongLine />}
-                  labelLine={{ stroke: 'var(--mezan-text-muted)', strokeWidth: 1 }}
-                >
-                  {pieData.map((_, i) => (
-                    <Cell key={i} fill={pieData[i].color} />
-                  ))}
-                </Pie>
-                <Tooltip formatter={(v: number) => `EGP ${formatAmount(v)}`} />
-              </PieChart>
-            </ResponsiveContainer>
-          )}
-        </div>
-      </div>
-      </CollapsibleSection>
-          )}
-          {id === 'budget-vs-actual' && (
-      <CollapsibleSection
-        title="Budget vs. Actual"
-        expanded={barChartExpanded}
-        onToggle={() => setBarChartExpanded((v) => !v)}
-      >
-      <div className="home-chart-row">
-        <div className="card home-chart-card home-chart-card--bar" style={{ margin: 0 }}>
-          {barData.length === 0 ? (
-            <p className="home-chart-empty">No categories or data.</p>
-          ) : (
-            <ResponsiveContainer width="100%" height={320}>
-              <BarChart data={barData} margin={{ top: 8, right: 8, left: 8, bottom: 60 }}>
-                <XAxis dataKey="name" tick={{ fontSize: 11 }} angle={-35} textAnchor="end" height={60} />
-                <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => `EGP ${(v / 1000).toFixed(0)}k`} />
-                <Tooltip
-                  formatter={(v: number) => [`EGP ${formatAmount(v)}`, '']}
-                  labelFormatter={(_, payload) => payload[0]?.payload?.fullName ?? ''}
-                />
-                <Legend />
-                <Bar dataKey="budget" name="Budget" fill="var(--mezan-accent)" radius={[2, 2, 0, 0]} />
-                <Bar dataKey="actual" name="Actual" fill="var(--mezan-success)" radius={[2, 2, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          )}
-        </div>
-      </div>
-      </CollapsibleSection>
-          )}
           {id === 'summary-by-category' && (
       <CollapsibleSection
         title="Summary by Category"
@@ -1664,16 +1554,16 @@ export default function Home() {
                   );
                 })}
                 <tr className="home-summary-total">
-                  <td className="home-summary-td-cat">Total{totalsForDisplay ? ' (over budget only)' : ''}</td>
-                  <td className="home-summary-td-num home-summary-td-budget">EGP {formatAmount(totalsForDisplay ? totalsForDisplay.budget : budgetByCategory.total_budget)}</td>
-                  <td className="home-summary-td-num home-summary-td-actual">EGP {formatAmount(totalsForDisplay ? totalsForDisplay.actual : budgetByCategory.total_actual)}</td>
-                  <td className={`home-summary-td-num home-summary-diff ${(totalsForDisplay ? totalsForDisplay.difference : budgetByCategory.total_difference) >= 0 ? 'home-summary-diff--ok' : 'home-summary-diff--over'}`}>
-                    EGP {formatAmount(totalsForDisplay ? totalsForDisplay.difference : budgetByCategory.total_difference)}
+                  <td className="home-summary-td-cat">Total{totalsForDisplay ? ' (over budget only)' : filteredTotalsForSummary ? ' (filtered)' : ''}</td>
+                  <td className="home-summary-td-num home-summary-td-budget">EGP {formatAmount(totalsForDisplay ? totalsForDisplay.budget : filteredTotalsForSummary ? filteredTotalsForSummary.budget : budgetByCategory.total_budget)}</td>
+                  <td className="home-summary-td-num home-summary-td-actual">EGP {formatAmount(totalsForDisplay ? totalsForDisplay.actual : filteredTotalsForSummary ? filteredTotalsForSummary.actual : budgetByCategory.total_actual)}</td>
+                  <td className={`home-summary-td-num home-summary-diff ${(totalsForDisplay ? totalsForDisplay.difference : filteredTotalsForSummary ? filteredTotalsForSummary.difference : budgetByCategory.total_difference) >= 0 ? 'home-summary-diff--ok' : 'home-summary-diff--over'}`}>
+                    EGP {formatAmount(totalsForDisplay ? totalsForDisplay.difference : filteredTotalsForSummary ? filteredTotalsForSummary.difference : budgetByCategory.total_difference)}
                   </td>
                   <td className="home-summary-td-progress">
-                    {(totalsForDisplay ? totalsForDisplay.budget : budgetByCategory.total_budget) > 0 && (() => {
-                      const totalBudgetVal = totalsForDisplay ? totalsForDisplay.budget : budgetByCategory.total_budget;
-                      const totalActual = totalsForDisplay ? totalsForDisplay.actual : budgetByCategory.total_actual;
+                    {(totalsForDisplay ? totalsForDisplay.budget : filteredTotalsForSummary ? filteredTotalsForSummary.budget : budgetByCategory.total_budget) > 0 && (() => {
+                      const totalBudgetVal = totalsForDisplay ? totalsForDisplay.budget : filteredTotalsForSummary ? filteredTotalsForSummary.budget : budgetByCategory.total_budget;
+                      const totalActual = totalsForDisplay ? totalsForDisplay.actual : filteredTotalsForSummary ? filteredTotalsForSummary.actual : budgetByCategory.total_actual;
                       const totalPctSpent = Math.min(100, (totalActual / totalBudgetVal) * 100);
                       const totalPctRemaining = Math.max(0, 100 - totalPctSpent);
                       const totalOver = totalActual > totalBudgetVal;

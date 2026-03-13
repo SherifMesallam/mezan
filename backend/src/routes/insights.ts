@@ -293,23 +293,40 @@ insightsRouter.get('/budget-by-category', async (req: AuthRequest, res) => {
   }
 });
 
+function buildTransactionWhere(userId: string, from: string, to: string, q?: string) {
+  const base = { userId, date: { gte: from, lte: to } as { gte: string; lte: string } };
+  const qLower = (q || '').trim().toLowerCase();
+  if (qLower.length === 0) return base;
+  return {
+    ...base,
+    OR: [
+      { merchant: { contains: qLower, mode: 'insensitive' as const } },
+      { category: { name: { contains: qLower, mode: 'insensitive' as const } } },
+      { tags: { some: { tag: { name: { contains: qLower, mode: 'insensitive' as const } } } } },
+    ],
+  };
+}
+
 /**
  * GET /v1/insights/spending-patterns
- * Query: from, to (YYYY-MM-DD). Returns when you spend more (time of day, day of month), top vendor, top category.
+ * Query: from, to (YYYY-MM-DD), q (optional search). Returns when you spend more (time of day, day of month), top vendor, top category.
  */
 insightsRouter.get('/spending-patterns', async (req: AuthRequest, res) => {
   try {
     const userId = req.user!.userId;
     const from = (req.query.from as string)?.trim();
     const to = (req.query.to as string)?.trim();
+    const q = (req.query.q as string)?.trim() || '';
     if (!from || !to || !/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
       res.status(422).json({ error: 'from and to (YYYY-MM-DD) are required' });
       return;
     }
 
+    const txWhere = buildTransactionWhere(userId, from, to, q);
+
     const [transactions, previousTransactions] = await Promise.all([
       prisma.transaction.findMany({
-        where: { userId, date: { gte: from, lte: to } },
+        where: txWhere,
         include: {
           category: { select: { id: true, name: true } },
         },
@@ -596,30 +613,38 @@ async function openAiChat(systemPrompt: string, userPrompt: string, maxTokens = 
 
 /**
  * GET /v1/insights/spending-explanation
- * Query: from, to (YYYY-MM-DD). Returns a short natural-language summary of spending (e.g. "You spent more on food because of 3 Talabat orders").
- * Cached for 1 day; cache invalidated when a new transaction >= 1000 EGP is added in the range.
+ * Query: from, to (YYYY-MM-DD), q (optional search). Returns a short natural-language summary of spending.
+ * Cached per userId/from/to/q; cache invalidated when a new transaction >= 1000 EGP is added in the range.
  */
 insightsRouter.get('/spending-explanation', async (req: AuthRequest, res) => {
   try {
     const userId = req.user!.userId;
     const from = (req.query.from as string)?.trim();
     const to = (req.query.to as string)?.trim();
+    const q = (req.query.q as string)?.trim() || '';
     if (!from || !to || !/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
       res.status(422).json({ error: 'from and to (YYYY-MM-DD) are required' });
       return;
     }
 
-    const cacheKey = `spending-explanation:${userId}:${from}:${to}`;
-    if (await isCacheValid(cacheKey, userId, from, to)) {
+    const cacheKey = `spending-explanation:${userId}:${from}:${to}:${q}`;
+    if (q === '' && (await isCacheValid(cacheKey, userId, from, to))) {
       const entry = insightsCache.get(cacheKey);
       if (entry) {
         res.json(entry.value);
         return;
       }
+    } else if (q !== '') {
+      const entry = insightsCache.get(cacheKey);
+      if (entry && Date.now() - entry.cachedAt < CACHE_TTL_MS) {
+        res.json(entry.value);
+        return;
+      }
     }
 
+    const txWhere = buildTransactionWhere(userId, from, to, q);
     const transactions = await prisma.transaction.findMany({
-      where: { userId, date: { gte: from, lte: to } },
+      where: txWhere,
       include: { category: { select: { id: true, name: true } } },
     });
 
@@ -682,23 +707,30 @@ insightsRouter.get('/spending-explanation', async (req: AuthRequest, res) => {
 
 /**
  * GET /v1/insights/anomalies
- * Query: from, to (YYYY-MM-DD). Returns list of anomalies: unusual category spend or unusually large single transactions.
- * Cached for 1 day; cache invalidated when a new transaction >= 1000 EGP is added in the range.
+ * Query: from, to (YYYY-MM-DD), q (optional search). Returns anomalies from transactions matching the search.
+ * Cached per userId/from/to/q.
  */
 insightsRouter.get('/anomalies', async (req: AuthRequest, res) => {
   try {
     const userId = req.user!.userId;
     const from = (req.query.from as string)?.trim();
     const to = (req.query.to as string)?.trim();
+    const q = (req.query.q as string)?.trim() || '';
     if (!from || !to || !/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
       res.status(422).json({ error: 'from and to (YYYY-MM-DD) are required' });
       return;
     }
 
-    const cacheKey = `anomalies:${userId}:${from}:${to}`;
-    if (await isCacheValid(cacheKey, userId, from, to)) {
+    const cacheKey = `anomalies:${userId}:${from}:${to}:${q}`;
+    if (q === '' && (await isCacheValid(cacheKey, userId, from, to))) {
       const entry = insightsCache.get(cacheKey);
       if (entry) {
+        res.json(entry.value);
+        return;
+      }
+    } else if (q !== '') {
+      const entry = insightsCache.get(cacheKey);
+      if (entry && Date.now() - entry.cachedAt < CACHE_TTL_MS) {
         res.json(entry.value);
         return;
       }
@@ -708,9 +740,11 @@ insightsRouter.get('/anomalies', async (req: AuthRequest, res) => {
     const toDate = new Date(to + 'T12:00:00Z');
     const days = Math.max(1, Math.round((toDate.getTime() - fromDate.getTime()) / 86400000) + 1);
 
+    const txWhere = buildTransactionWhere(userId, from, to, q);
+
     const [currentTx, baselineTx] = await Promise.all([
       prisma.transaction.findMany({
-        where: { userId, date: { gte: from, lte: to } },
+        where: txWhere,
         include: { category: { select: { id: true, name: true } } },
       }),
       (async () => {
@@ -720,8 +754,9 @@ insightsRouter.get('/anomalies', async (req: AuthRequest, res) => {
         baseStart.setUTCDate(baseStart.getUTCDate() - days);
         const baseFrom = baseStart.toISOString().slice(0, 10);
         const baseTo = baseEnd.toISOString().slice(0, 10);
+        const baseWhere = buildTransactionWhere(userId, baseFrom, baseTo, q);
         return prisma.transaction.findMany({
-          where: { userId, date: { gte: baseFrom, lte: baseTo } },
+          where: baseWhere,
           include: { category: { select: { id: true, name: true } } },
         });
       })(),
