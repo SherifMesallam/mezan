@@ -233,6 +233,223 @@ insightsRouter.get('/budget-by-category', async (req: AuthRequest, res) => {
   }
 });
 
+/**
+ * GET /v1/insights/spending-patterns
+ * Query: from, to (YYYY-MM-DD). Returns when you spend more (time of day, day of month), top vendor, top category.
+ */
+insightsRouter.get('/spending-patterns', async (req: AuthRequest, res) => {
+  try {
+    const userId = req.user!.userId;
+    const from = (req.query.from as string)?.trim();
+    const to = (req.query.to as string)?.trim();
+    if (!from || !to || !/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
+      res.status(422).json({ error: 'from and to (YYYY-MM-DD) are required' });
+      return;
+    }
+
+    const [transactions, previousTransactions] = await Promise.all([
+      prisma.transaction.findMany({
+        where: { userId, date: { gte: from, lte: to } },
+        include: {
+          category: { select: { id: true, name: true } },
+        },
+      }),
+      (async () => {
+        const fromDate = new Date(from + 'T12:00:00Z');
+        const toDate = new Date(to + 'T12:00:00Z');
+        const days = Math.round((toDate.getTime() - fromDate.getTime()) / 86400000) + 1;
+        const prevToDate = new Date(fromDate);
+        prevToDate.setUTCDate(prevToDate.getUTCDate() - 1);
+        const prevFromDate = new Date(prevToDate);
+        prevFromDate.setUTCDate(prevFromDate.getUTCDate() - days + 1);
+        const prevFrom = prevFromDate.toISOString().slice(0, 10);
+        const prevTo = prevToDate.toISOString().slice(0, 10);
+        return prisma.transaction.findMany({
+          where: { userId, date: { gte: prevFrom, lte: prevTo } },
+          select: { amount: true, egpValue: true },
+        });
+      })(),
+    ]);
+
+    const byHour = new Map<number, number>();
+    const byDayOfMonth = new Map<number, number>();
+    const byDayOfWeek = new Map<number, number>();
+    const byMerchant = new Map<string, number>();
+    const byCategory = new Map<string, { name: string; amount: number }>();
+    const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+    let largest: { amount: number; date: string; merchant: string | null; category_name: string } | null = null;
+
+    for (const t of transactions) {
+      const amt = effectiveAmount(t);
+      const hour = t.time ? parseHour(t.time) : 12;
+      byHour.set(hour, (byHour.get(hour) ?? 0) + amt);
+      const day = parseInt(t.date.slice(8, 10), 10) || 1;
+      byDayOfMonth.set(day, (byDayOfMonth.get(day) ?? 0) + amt);
+      const dow = new Date(t.date + 'T12:00:00Z').getUTCDay();
+      byDayOfWeek.set(dow, (byDayOfWeek.get(dow) ?? 0) + amt);
+      const merchant = (t.merchant || '').trim() || 'Unknown';
+      byMerchant.set(merchant, (byMerchant.get(merchant) ?? 0) + amt);
+      const catId = t.categoryId;
+      const cur = byCategory.get(catId);
+      if (!cur) byCategory.set(catId, { name: t.category.name, amount: amt });
+      else cur.amount += amt;
+      if (largest == null || amt > largest.amount) {
+        largest = {
+          amount: amt,
+          date: t.date,
+          merchant: t.merchant,
+          category_name: t.category.name,
+        };
+      }
+    }
+
+    const currentTotal = transactions.reduce((s, t) => s + effectiveAmount(t), 0);
+    const previousTotal = previousTransactions.reduce((s, t) => s + effectiveAmount(t), 0);
+    let spending_trend: { trend: 'up' | 'down' | 'same'; percent_change: number; current_total: number; previous_total: number } | null = null;
+    if (previousTotal > 0) {
+      const percent_change = ((currentTotal - previousTotal) / previousTotal) * 100;
+      const trend = percent_change > 0 ? 'up' : percent_change < 0 ? 'down' : 'same';
+      spending_trend = {
+        trend,
+        percent_change: Math.round(percent_change * 10) / 10,
+        current_total: Math.round(currentTotal * 100) / 100,
+        previous_total: Math.round(previousTotal * 100) / 100,
+      };
+    } else if (currentTotal > 0) {
+      spending_trend = { trend: 'up', percent_change: 100, current_total: Math.round(currentTotal * 100) / 100, previous_total: 0 };
+    }
+
+    const peakHour = [...byHour.entries()].sort((a, b) => b[1] - a[1])[0];
+    const peakDay = [...byDayOfMonth.entries()].sort((a, b) => b[1] - a[1])[0];
+    const peakDayOfWeek = [...byDayOfWeek.entries()].sort((a, b) => b[1] - a[1])[0];
+    const topVendor = [...byMerchant.entries()].sort((a, b) => b[1] - a[1])[0];
+    const topCat = [...byCategory.entries()].sort((a, b) => b[1].amount - a[1].amount)[0];
+
+    res.json({
+      peak_time_of_day: peakHour ? { hour: peakHour[0], amount: Math.round(peakHour[1] * 100) / 100 } : null,
+      peak_day_of_month: peakDay ? { day: peakDay[0], amount: Math.round(peakDay[1] * 100) / 100 } : null,
+      peak_day_of_week: peakDayOfWeek ? { day_of_week: peakDayOfWeek[0], day_name: DAY_NAMES[peakDayOfWeek[0]], amount: Math.round(peakDayOfWeek[1] * 100) / 100 } : null,
+      top_vendor: topVendor ? { name: topVendor[0], amount: Math.round(topVendor[1] * 100) / 100 } : null,
+      top_category: topCat ? { name: topCat[1].name, amount: Math.round(topCat[1].amount * 100) / 100 } : null,
+      spending_trend: spending_trend ?? null,
+      largest_transaction: largest ? { amount: Math.round(largest.amount * 100) / 100, date: largest.date, merchant: largest.merchant ?? '—', category_name: largest.category_name } : null,
+    });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Failed to get spending patterns' });
+  }
+});
+
+function parseHour(timeStr: string): number {
+  const part = timeStr.trim().slice(0, 5);
+  const [h] = part.split(':').map((s) => parseInt(s, 10));
+  if (Number.isFinite(h) && h >= 0 && h <= 23) return h;
+  return 12;
+}
+
+/**
+ * GET /v1/insights/predict-end-of-month
+ * Query: month (YYYY-MM). Uses AI to predict total spend by end of month given spending so far.
+ */
+insightsRouter.get('/predict-end-of-month', async (req: AuthRequest, res) => {
+  try {
+    const userId = req.user!.userId;
+    const month = (req.query.month as string)?.trim() || getCurrentCalendarMonth();
+    if (!/^\d{4}-\d{2}$/.test(month)) {
+      res.status(422).json({ error: 'month (YYYY-MM) is required' });
+      return;
+    }
+    const [start, end] = monthRangeForMonth(month);
+    const today = new Date();
+    const todayStr = today.toISOString().slice(0, 10);
+    const endDate = new Date(end + 'T12:00:00Z');
+    const currentDate = todayStr > end ? end : todayStr;
+
+    const transactions = await prisma.transaction.findMany({
+      where: { userId, date: { gte: start, lte: currentDate } },
+      select: { amount: true, egpValue: true, date: true },
+    });
+    const spentSoFar = transactions.reduce((s, t) => s + effectiveAmount(t), 0);
+    const startDate = new Date(start + 'T12:00:00Z');
+    const currentDateObj = new Date(currentDate + 'T12:00:00Z');
+    const daysElapsed = Math.round((currentDateObj.getTime() - startDate.getTime()) / 86400000) + 1;
+    const daysInMonth = Math.round((endDate.getTime() - startDate.getTime()) / 86400000) + 1;
+    const daysRemaining = Math.max(0, daysInMonth - daysElapsed);
+
+    const apiKey = process.env.OPENAI_API_KEY?.trim();
+    if (!apiKey) {
+      const fallbackTotal = daysInMonth > 0 ? (spentSoFar / daysElapsed) * daysInMonth : spentSoFar;
+      return res.json({
+        prediction_text: `Based on daily average so far (EGP ${(spentSoFar / daysElapsed).toFixed(0)}/day), projected total: EGP ${Math.round(fallbackTotal)}.`,
+        predicted_total: Math.round(fallbackTotal * 100) / 100,
+        spent_so_far: Math.round(spentSoFar * 100) / 100,
+        days_elapsed: daysElapsed,
+        days_remaining: daysRemaining,
+      });
+    }
+
+    const baseURL = (process.env.OPENAI_BASE_URL?.trim() || 'https://api.openai.com/v1').replace(/\/$/, '');
+    const model = process.env.OPENAI_MODEL?.trim() || 'gpt-4o-mini';
+    const prompt = `You are a personal finance assistant. Given:
+- Today is ${currentDate} (day ${daysElapsed} of the month, ${daysRemaining} days left).
+- Total spending so far this month: EGP ${Math.round(spentSoFar)}.
+- Number of transactions so far: ${transactions.length}.
+
+Predict the total spending by end of this month (EGP). Reply in two lines:
+1. One short sentence explaining your prediction (e.g. "Spending is steady; expect similar daily rate.").
+2. A line that says exactly: "Predicted total: EGP X" where X is a number (no decimals).`;
+
+    const response = await fetch(`${baseURL}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: 'user', content: prompt }],
+        max_tokens: 150,
+        temperature: 0.3,
+      }),
+    });
+
+    if (!response.ok) {
+      const err = await response.text();
+      const fallbackTotal = daysInMonth > 0 ? (spentSoFar / daysElapsed) * daysInMonth : spentSoFar;
+      return res.json({
+        prediction_text: `Based on daily average: EGP ${Math.round(fallbackTotal)} by end of month.`,
+        predicted_total: Math.round(fallbackTotal * 100) / 100,
+        spent_so_far: Math.round(spentSoFar * 100) / 100,
+        days_elapsed: daysElapsed,
+        days_remaining: daysRemaining,
+      });
+    }
+
+    const data = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> };
+    const content = data.choices?.[0]?.message?.content?.trim() ?? '';
+    const lineMatch = content.match(/Predicted total:\s*EGP\s*([\d,]+(?:\.\d+)?)/i);
+    const numFromLine = lineMatch ? parseFloat(lineMatch[1].replace(/,/g, '')) : NaN;
+    const egpMatches = [...content.matchAll(/EGP\s*([\d,]+(?:\.\d+)?)/gi)];
+    const lastEgp = egpMatches.length > 0 ? parseFloat(egpMatches[egpMatches.length - 1][1].replace(/,/g, '')) : NaN;
+    const fallback = daysInMonth > 0 ? (spentSoFar / daysElapsed) * daysInMonth : spentSoFar;
+    const predicted_total = Number.isFinite(numFromLine) ? numFromLine : (Number.isFinite(lastEgp) ? lastEgp : fallback);
+
+    const prediction_text = content.split('\n')[0]?.trim() || `Projected total: EGP ${Math.round(predicted_total)}.`;
+
+    res.json({
+      prediction_text,
+      predicted_total: Math.round(predicted_total * 100) / 100,
+      spent_so_far: Math.round(spentSoFar * 100) / 100,
+      days_elapsed: daysElapsed,
+      days_remaining: daysRemaining,
+    });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Failed to get prediction' });
+  }
+});
+
 /** Diagnostic: list each category with its transaction count and total amount. Use to spot duplicate names or mismatched ids (e.g. Subscriptions showing 0). */
 insightsRouter.get('/category-counts', async (req: AuthRequest, res) => {
   try {

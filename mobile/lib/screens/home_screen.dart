@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:fl_chart/fl_chart.dart';
 import '../api.dart';
 import '../app_state.dart';
 import 'add_transaction_screen.dart';
@@ -23,17 +22,23 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
+/// High-contrast palette: distinct hues so categories are easy to tell apart.
 const _chartColors = [
-  Color(0xFF0d9b9e),
-  Color(0xFF2196F3),
-  Color(0xFFE91E63),
-  Color(0xFF795548),
-  Color(0xFF9E9E9E),
-  Color(0xFFFF9800),
-  Color(0xFF4CAF50),
-  Color(0xFF607D8B),
-  Color(0xFF00BCD4),
-  Color(0xFFFF5722),
+  Color(0xFF1565C0), // blue
+  Color(0xFF2E7D32), // green
+  Color(0xFFC62828), // red
+  Color(0xFFF9A825), // amber
+  Color(0xFF6A1B9A), // purple
+  Color(0xFF00838F), // teal
+  Color(0xFFD84315), // deep orange
+  Color(0xFFAD1457), // pink
+  Color(0xFF37474F), // blue grey
+  Color(0xFF558B2F), // light green
+  Color(0xFF00695C), // dark teal
+  Color(0xFF7B1FA2), // violet
+  Color(0xFFE65100), // orange
+  Color(0xFF0277BD), // light blue
+  Color(0xFF5D4037), // brown
 ];
 
 String _monthRangeStart(String month) {
@@ -48,10 +53,33 @@ String _monthRangeEnd(String month) {
   return '$month-${lastDay.toString().padLeft(2, '0')}';
 }
 
+const List<String> _monthNames = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+];
+
+String _formatMonth(String month) {
+  final parts = month.split('-');
+  if (parts.length != 2) return month;
+  final m = int.tryParse(parts[1]) ?? 0;
+  final y = parts[0];
+  if (m >= 1 && m <= 12) return '${_monthNames[m - 1]} $y';
+  return month;
+}
+
+String _formatShortDate(String iso) {
+  if (iso.length < 10) return iso;
+  final d = DateTime.tryParse(iso);
+  if (d == null) return iso;
+  return '${d.day} ${_monthNames[d.month - 1].substring(0, 3)} ${d.year}';
+}
+
 class _HomeScreenState extends State<HomeScreen> {
   List<Map<String, dynamic>> _transactions = [];
   Map<String, dynamic>? _budgetStatus;
   Map<String, dynamic>? _budgetByCategory;
+  Map<String, dynamic>? _insights;
+  Map<String, dynamic>? _prediction;
   List<Map<String, dynamic>> _categories = [];
   List<Map<String, dynamic>> _tags = [];
   bool _loading = true;
@@ -62,6 +90,8 @@ class _HomeScreenState extends State<HomeScreen> {
   String _month = '';
   String _dateFrom = '';
   String _dateTo = '';
+  bool _timeFilterExpanded = false;
+  bool _fabExpanded = false;
 
   @override
   void initState() {
@@ -93,6 +123,18 @@ class _HomeScreenState extends State<HomeScreen> {
       final res = await api.get('/v1/transactions', {'from': from, 'to': to, 'limit': '20'});
       final budgetRes = await api.get('/v1/insights/budget-status', {'month': month});
       final byCatRes = await api.get('/v1/insights/budget-by-category', _useAllTime ? {'month': month, 'from': from, 'to': to} : {'month': month});
+      Map<String, dynamic>? insightsRes;
+      try {
+        insightsRes = await api.get('/v1/insights/spending-patterns', {'from': from, 'to': to});
+      } catch (_) {
+        insightsRes = null;
+      }
+      Map<String, dynamic>? predictionRes;
+      try {
+        predictionRes = await api.get('/v1/insights/predict-end-of-month', {'month': month});
+      } catch (_) {
+        predictionRes = null;
+      }
       final catRes = await api.get('/v1/categories');
       final tagRes = await api.get('/v1/tags');
       if (mounted) {
@@ -100,6 +142,8 @@ class _HomeScreenState extends State<HomeScreen> {
           _transactions = List<Map<String, dynamic>>.from(res['transactions'] ?? []);
           _budgetStatus = budgetRes;
           _budgetByCategory = byCatRes;
+          _insights = insightsRes;
+          _prediction = predictionRes;
           _categories = List<Map<String, dynamic>>.from(catRes['categories'] ?? []);
           _tags = List<Map<String, dynamic>>.from(tagRes['tags'] ?? []);
           _loading = false;
@@ -207,260 +251,116 @@ class _HomeScreenState extends State<HomeScreen> {
                           child: Text(_error!),
                         ),
                       ),
-                    // Time range filter at top – compact
-                    Card(
-                      margin: const EdgeInsets.only(bottom: 12),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            Row(
-                              children: [
-                                _TimeRangeSegment(
-                                  label: 'This month',
-                                  selected: !_useAllTime && !_useDateRange,
-                                  onTap: () => setState(() {
-                                    _useAllTime = false;
-                                    _useDateRange = false;
-                                    _load();
-                                  }),
-                                ),
-                                const SizedBox(width: 8),
-                                _TimeRangeSegment(
-                                  label: 'Custom',
-                                  selected: !_useAllTime && _useDateRange,
-                                  onTap: () => setState(() {
-                                    _useAllTime = false;
-                                    _useDateRange = true;
-                                    if (_dateFrom.isEmpty) _dateFrom = _monthRangeStart(_month);
-                                    if (_dateTo.isEmpty) _dateTo = _monthRangeEnd(_month);
-                                    _load();
-                                  }),
-                                ),
-                                const SizedBox(width: 8),
-                                _TimeRangeSegment(
-                                  label: 'All time',
-                                  selected: _useAllTime,
-                                  onTap: () => setState(() {
-                                    _useAllTime = true;
-                                    _useDateRange = false;
-                                    _load();
-                                  }),
-                                ),
-                              ],
-                            ),
-                            if (!_useAllTime && !_useDateRange) ...[
-                              const SizedBox(height: 8),
-                              Row(
-                                children: [
-                                  Text('Month', style: Theme.of(context).textTheme.labelSmall),
-                                  const SizedBox(width: 8),
-                                  Expanded(
-                                    child: FilledButton.tonal(
-                                      style: FilledButton.styleFrom(
-                                        padding: const EdgeInsets.symmetric(vertical: 8),
-                                        minimumSize: Size.zero,
-                                      ),
-                                      onPressed: () async {
-                                        final parts = _month.split('-');
-                                        final initial = DateTime(int.parse(parts[0]), int.parse(parts[1]), 1);
-                                        final picked = await showDatePicker(
-                                          context: context,
-                                          initialDate: initial,
-                                          firstDate: DateTime(2020, 1),
-                                          lastDate: DateTime(2030, 12),
-                                          initialDatePickerMode: DatePickerMode.year,
-                                        );
-                                        if (picked != null && mounted) {
-                                          setState(() {
-                                            _month = '${picked.year}-${picked.month.toString().padLeft(2, '0')}';
-                                            _load();
-                                          });
-                                        }
-                                      },
-                                      child: Text(_month, style: const TextStyle(fontSize: 13)),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ],
-                            if (!_useAllTime && _useDateRange) ...[
-                              const SizedBox(height: 8),
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: FilledButton.tonal(
-                                      style: FilledButton.styleFrom(
-                                        padding: const EdgeInsets.symmetric(vertical: 8),
-                                        minimumSize: Size.zero,
-                                      ),
-                                      onPressed: () async {
-                                        final picked = await showDatePicker(
-                                          context: context,
-                                          initialDate: _dateFrom.isNotEmpty ? DateTime.parse(_dateFrom) : DateTime.now(),
-                                          firstDate: DateTime(2020),
-                                          lastDate: DateTime(2030),
-                                        );
-                                        if (picked != null && mounted) {
-                                          setState(() {
-                                            _dateFrom = '${picked.year}-${picked.month.toString().padLeft(2, '0')}-${picked.day.toString().padLeft(2, '0')}';
-                                            _load();
-                                          });
-                                        }
-                                      },
-                                      child: Text(_dateFrom.isEmpty ? 'From' : _dateFrom, style: const TextStyle(fontSize: 12)),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  Expanded(
-                                    child: FilledButton.tonal(
-                                      style: FilledButton.styleFrom(
-                                        padding: const EdgeInsets.symmetric(vertical: 8),
-                                        minimumSize: Size.zero,
-                                      ),
-                                      onPressed: () async {
-                                        final picked = await showDatePicker(
-                                          context: context,
-                                          initialDate: _dateTo.isNotEmpty ? DateTime.parse(_dateTo) : DateTime.now(),
-                                          firstDate: DateTime(2020),
-                                          lastDate: DateTime(2030),
-                                        );
-                                        if (picked != null && mounted) {
-                                          setState(() {
-                                            _dateTo = '${picked.year}-${picked.month.toString().padLeft(2, '0')}-${picked.day.toString().padLeft(2, '0')}';
-                                            _load();
-                                          });
-                                        }
-                                      },
-                                      child: Text(_dateTo.isEmpty ? 'To' : _dateTo, style: const TextStyle(fontSize: 12)),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ],
-                          ],
-                        ),
-                      ),
+                    // Time range: collapsed = title + "Tap to set time range"; expanded = full filter
+                    _TimeFilterSection(
+                      expanded: _timeFilterExpanded,
+                      useAllTime: _useAllTime,
+                      useDateRange: _useDateRange,
+                      month: _month,
+                      dateFrom: _dateFrom,
+                      dateTo: _dateTo,
+                      onToggle: () => setState(() => _timeFilterExpanded = !_timeFilterExpanded),
+                      onSelectMonth: () async {
+                        final parts = _month.split('-');
+                        final initial = DateTime(int.parse(parts[0]), int.parse(parts[1]), 1);
+                        final picked = await showDatePicker(
+                          context: context,
+                          initialDate: initial,
+                          firstDate: DateTime(2020, 1),
+                          lastDate: DateTime(2030, 12),
+                          initialDatePickerMode: DatePickerMode.year,
+                        );
+                        if (picked != null && mounted) {
+                          setState(() {
+                            _month = '${picked.year}-${picked.month.toString().padLeft(2, '0')}';
+                            _timeFilterExpanded = false;
+                            _load();
+                          });
+                        }
+                      },
+                      onSelectThisMonth: () => setState(() {
+                        _useAllTime = false;
+                        _useDateRange = false;
+                        _timeFilterExpanded = false;
+                        _load();
+                      }),
+                      onSelectCustom: () => setState(() {
+                        _useAllTime = false;
+                        _useDateRange = true;
+                        if (_dateFrom.isEmpty) _dateFrom = _monthRangeStart(_month);
+                        if (_dateTo.isEmpty) _dateTo = _monthRangeEnd(_month);
+                        _load();
+                      }),
+                      onSelectFrom: () async {
+                        final picked = await showDatePicker(
+                          context: context,
+                          initialDate: _dateFrom.isNotEmpty ? DateTime.parse(_dateFrom) : DateTime.now(),
+                          firstDate: DateTime(2020),
+                          lastDate: DateTime(2030),
+                        );
+                        if (picked != null && mounted) {
+                          setState(() {
+                            _dateFrom = '${picked.year}-${picked.month.toString().padLeft(2, '0')}-${picked.day.toString().padLeft(2, '0')}';
+                            _load();
+                          });
+                        }
+                      },
+                      onSelectTo: () async {
+                        final picked = await showDatePicker(
+                          context: context,
+                          initialDate: _dateTo.isNotEmpty ? DateTime.parse(_dateTo) : DateTime.now(),
+                          firstDate: DateTime(2020),
+                          lastDate: DateTime(2030),
+                        );
+                        if (picked != null && mounted) {
+                          setState(() {
+                            _dateTo = '${picked.year}-${picked.month.toString().padLeft(2, '0')}-${picked.day.toString().padLeft(2, '0')}';
+                            _timeFilterExpanded = false;
+                            _load();
+                          });
+                        }
+                      },
+                      onSelectAllTime: () => setState(() {
+                        _useAllTime = true;
+                        _useDateRange = false;
+                        _timeFilterExpanded = false;
+                        _load();
+                      }),
                     ),
-                    Text(
-                      _useAllTime ? 'Your spending (all time)' : 'Your spending this period',
-                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                            color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    const SizedBox(height: 16),
+                    // Spent & Remaining – main focus, bigger and bolder
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          child: _SummaryCard(
+                            label: 'Spent',
+                            value: 'EGP ${_monthTotal.toStringAsFixed(0)}',
+                            valueColor: const Color(0xFF2196F3),
+                            prominent: true,
                           ),
-                    ),
-                    const SizedBox(height: 12),
-                    _SummaryCard(
-                      label: 'Spent',
-                      value: 'EGP ${_monthTotal.toStringAsFixed(2)}',
-                      valueColor: _monthTotal > _totalBudget && _totalBudget > 0
-                          ? Theme.of(context).colorScheme.error
-                          : Theme.of(context).colorScheme.primary,
-                    ),
-                    const SizedBox(height: 8),
-                    _SummaryCard(
-                      label: 'Remaining',
-                      value: 'EGP ${(_totalBudget - _monthTotal).toStringAsFixed(2)}',
-                      valueColor: _totalBudget - _monthTotal >= 0
-                          ? Theme.of(context).colorScheme.tertiary
-                          : Theme.of(context).colorScheme.error,
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: _SummaryCard(
+                            label: 'Remaining',
+                            value: 'EGP ${(_totalBudget - _monthTotal).toStringAsFixed(0)}',
+                            valueColor: _totalBudget > 0 && (_totalBudget - _monthTotal) < _totalBudget * 0.10
+                                ? const Color(0xFFE57373)
+                                : const Color(0xFF4CAF50),
+                            prominent: true,
+                          ),
+                        ),
+                      ],
                     ),
                     if (_summaryItems.isNotEmpty) ...[
                       const SizedBox(height: 16),
-                      Text('Spending by category', style: Theme.of(context).textTheme.titleMedium),
-                      const SizedBox(height: 8),
-                      SizedBox(
-                        height: 220,
-                        child: PieChart(
-                          PieChartData(
-                            sectionsSpace: 2,
-                            centerSpaceRadius: 48,
-                            sections: () {
-                              final items = _summaryItems.where((e) => ((e['actual'] as num?)?.toDouble() ?? 0) > 0).toList();
-                              final total = items.fold<double>(0, (s, e) => s + ((e['actual'] as num?)?.toDouble() ?? 0));
-                              return items.asMap().entries.map((e) {
-                                final v = (e.value['actual'] as num?)?.toDouble() ?? 0;
-                                final pct = total > 0 ? (v / total * 100).round() : 0;
-                                return PieChartSectionData(
-                                  value: v,
-                                  title: pct >= 2 ? '$pct%' : '',
-                                  color: _chartColors[e.key % _chartColors.length],
-                                  radius: 48,
-                                  titleStyle: const TextStyle(fontSize: 11, fontWeight: FontWeight.w500),
-                                );
-                              }).toList();
-                            }(),
-                          ),
-                        ),
+                      Text(
+                        'Where your money is going',
+                        style: Theme.of(context).textTheme.titleSmall,
                       ),
-                      const SizedBox(height: 20),
-                      Text('Budget vs actual', style: Theme.of(context).textTheme.titleMedium),
                       const SizedBox(height: 8),
-                      LayoutBuilder(
-                        builder: (context, constraints) {
-                          const minBarGroupWidth = 56.0;
-                          final count = _summaryItems.length;
-                          final chartWidth = (count * minBarGroupWidth).clamp(constraints.maxWidth, double.infinity);
-                          return SingleChildScrollView(
-                            scrollDirection: Axis.horizontal,
-                            child: SizedBox(
-                              width: chartWidth,
-                              height: 220,
-                              child: BarChart(
-                                BarChartData(
-                                  alignment: BarChartAlignment.spaceAround,
-                                  maxY: () {
-                                    double maxVal = 0;
-                                    for (final r in _summaryItems) {
-                                      final budget = (r['budget'] as num?)?.toDouble() ?? 0.0;
-                                      final actual = (r['actual'] as num?)?.toDouble() ?? 0.0;
-                                      if (budget > maxVal) maxVal = budget;
-                                      if (actual > maxVal) maxVal = actual;
-                                    }
-                                    return (maxVal * 1.1).clamp(1.0, double.infinity);
-                                  }(),
-                                  barGroups: _summaryItems.asMap().entries.map((e) {
-                                    final budget = (e.value['budget'] as num?)?.toDouble() ?? 0;
-                                    final actual = (e.value['actual'] as num?)?.toDouble() ?? 0;
-                                    return BarChartGroupData(
-                                      x: e.key,
-                                      barRods: [
-                                        BarChartRodData(toY: budget, color: Theme.of(context).colorScheme.primary, width: 10, borderRadius: const BorderRadius.vertical(top: Radius.circular(2))),
-                                        BarChartRodData(toY: actual, color: Theme.of(context).colorScheme.tertiary, width: 10, borderRadius: const BorderRadius.vertical(top: Radius.circular(2))),
-                                      ],
-                                      showingTooltipIndicators: [],
-                                    );
-                                  }).toList(),
-                                  titlesData: FlTitlesData(
-                                    leftTitles: AxisTitles(sideTitles: SideTitles(showTitles: true, reservedSize: 36, getTitlesWidget: (v, _) => Text('${(v / 1000).toStringAsFixed(0)}k', style: const TextStyle(fontSize: 10)))),
-                                    bottomTitles: AxisTitles(
-                                      sideTitles: SideTitles(
-                                        showTitles: true,
-                                        getTitlesWidget: (v, _) {
-                                          final i = v.toInt();
-                                          if (i >= 0 && i < _summaryItems.length) {
-                                            final name = _summaryItems[i]['category_name'] as String? ?? '';
-                                            return Padding(
-                                              padding: const EdgeInsets.only(top: 6),
-                                              child: Text(name.length > 10 ? '${name.substring(0, 9)}…' : name, style: const TextStyle(fontSize: 10), maxLines: 1, overflow: TextOverflow.ellipsis, textAlign: TextAlign.center),
-                                            );
-                                          }
-                                          return const SizedBox.shrink();
-                                        },
-                                        reservedSize: 32,
-                                      ),
-                                    ),
-                                    topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                                    rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                                  ),
-                                  gridData: const FlGridData(show: true, drawVerticalLine: false),
-                                ),
-                              ),
-                            ),
-                          );
-                        },
-                      ),
+                      _SpendingByCategoryWaffle(summaryItems: _summaryItems),
                       const SizedBox(height: 20),
                       Text('Summary by category', style: Theme.of(context).textTheme.titleMedium),
                       const SizedBox(height: 8),
@@ -492,38 +392,17 @@ class _HomeScreenState extends State<HomeScreen> {
                         ],
                       ),
                     ],
-                    if (_budgetStatus != null && (_budgetStatus!['budget_status'] as List).isNotEmpty) ...[
-                      const SizedBox(height: 16),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Text('Budgets', style: Theme.of(context).textTheme.titleMedium),
-                          TextButton(
-                            onPressed: () => Navigator.push(
-                              context,
-                              MaterialPageRoute(builder: (_) => const BudgetsScreen()),
-                            ).then((_) => _load()),
-                            child: const Text('See all'),
-                          ),
-                        ],
-                      ),
-                      ...(_budgetStatus!['budget_status'] as List).take(3).map((b) {
-                        final spent = (b['spent'] as num?)?.toDouble() ?? 0;
-                        final amount = (b['amount'] as num?)?.toDouble() ?? 1;
-                        final overspent = b['overspent'] == true;
-                        return Card(
-                          margin: const EdgeInsets.only(bottom: 8),
-                          color: overspent ? Theme.of(context).colorScheme.errorContainer.withValues(alpha: 0.3) : null,
-                          child: ListTile(
-                            title: Text(_budgetScopeDisplay(b)),
-                            subtitle: LinearProgressIndicator(
-                              value: amount > 0 ? (spent / amount).clamp(0.0, 1.0) : 0,
-                              backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
-                            ),
-                            trailing: Text('EGP ${spent.toStringAsFixed(0)} / ${amount.toStringAsFixed(0)}'),
-                          ),
-                        );
-                      }),
+                    if (_summaryItems.isNotEmpty) ...[
+                      const SizedBox(height: 20),
+                      Text('Insights', style: Theme.of(context).textTheme.titleMedium),
+                      const SizedBox(height: 8),
+                      _InsightsSection(insights: _insights),
+                      if (_prediction != null) ...[
+                        const SizedBox(height: 20),
+                        Text('Prediction', style: Theme.of(context).textTheme.titleMedium),
+                        const SizedBox(height: 8),
+                        _PredictionSection(prediction: _prediction!),
+                      ],
                     ],
                     const SizedBox(height: 16),
                     Row(
@@ -585,36 +464,21 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
               ),
       ),
-      floatingActionButton: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          FloatingActionButton.small(
-            heroTag: 'sms',
-            onPressed: () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const AddFromSmsScreen()),
-            ).then((_) => _load()),
-            child: const Icon(Icons.sms),
-          ),
-          const SizedBox(height: 8),
-          FloatingActionButton.small(
-            heroTag: 'voice',
-            onPressed: () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const AddFromVoiceScreen()),
-            ).then((_) => _load()),
-            child: const Icon(Icons.mic),
-          ),
-          const SizedBox(height: 8),
-          FloatingActionButton(
-            heroTag: 'add',
-            onPressed: () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const AddTransactionScreen()),
-            ).then((_) => _load()),
-            child: const Icon(Icons.add),
-          ),
-        ],
+      floatingActionButton: _HomeFab(
+        expanded: _fabExpanded,
+        onToggle: () => setState(() => _fabExpanded = !_fabExpanded),
+        onAdd: () {
+          setState(() => _fabExpanded = false);
+          Navigator.push(context, MaterialPageRoute(builder: (_) => const AddTransactionScreen())).then((_) => _load());
+        },
+        onVoice: () {
+          setState(() => _fabExpanded = false);
+          Navigator.push(context, MaterialPageRoute(builder: (_) => const AddFromVoiceScreen())).then((_) => _load());
+        },
+        onSms: () {
+          setState(() => _fabExpanded = false);
+          Navigator.push(context, MaterialPageRoute(builder: (_) => const AddFromSmsScreen())).then((_) => _load());
+        },
       ),
       bottomNavigationBar: SafeArea(
         child: Padding(
@@ -644,6 +508,507 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 }
 
+/// Collapsed: "Showing data for March 2026" + "Tap to set time range". Expanded: full filter.
+class _TimeFilterSection extends StatelessWidget {
+  const _TimeFilterSection({
+    required this.expanded,
+    required this.useAllTime,
+    required this.useDateRange,
+    required this.month,
+    required this.dateFrom,
+    required this.dateTo,
+    required this.onToggle,
+    required this.onSelectMonth,
+    required this.onSelectThisMonth,
+    required this.onSelectCustom,
+    required this.onSelectFrom,
+    required this.onSelectTo,
+    required this.onSelectAllTime,
+  });
+
+  final bool expanded;
+  final bool useAllTime;
+  final bool useDateRange;
+  final String month;
+  final String dateFrom;
+  final String dateTo;
+  final VoidCallback onToggle;
+  final VoidCallback onSelectMonth;
+  final VoidCallback onSelectThisMonth;
+  final VoidCallback onSelectCustom;
+  final VoidCallback onSelectFrom;
+  final VoidCallback onSelectTo;
+  final VoidCallback onSelectAllTime;
+
+  String _title() {
+    if (useAllTime) return 'Showing data for all time';
+    if (useDateRange) return '${_formatShortDate(dateFrom)} – ${_formatShortDate(dateTo)}';
+    return 'Showing data for ${_formatMonth(month)}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    if (!expanded) {
+      return Card(
+        margin: const EdgeInsets.only(bottom: 8),
+        child: InkWell(
+          onTap: onToggle,
+          borderRadius: BorderRadius.circular(12),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            child: Row(
+              children: [
+                Icon(Icons.calendar_today_outlined, size: 20, color: theme.colorScheme.primary),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(_title(), style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600)),
+                      const SizedBox(height: 2),
+                      Text('Tap to set time range', style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+                    ],
+                  ),
+                ),
+                Icon(Icons.keyboard_arrow_down, color: theme.colorScheme.onSurfaceVariant),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+    return Card(
+      margin: const EdgeInsets.only(bottom: 8),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text('Set time range', style: theme.textTheme.titleSmall),
+                IconButton(
+                  icon: const Icon(Icons.close),
+                  onPressed: onToggle,
+                  style: IconButton.styleFrom(padding: const EdgeInsets.all(4), minimumSize: const Size(32, 32)),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Row(
+              children: [
+                _TimeRangeSegment(label: 'This month', selected: !useAllTime && !useDateRange, onTap: onSelectThisMonth),
+                const SizedBox(width: 6),
+                _TimeRangeSegment(label: 'Custom', selected: !useAllTime && useDateRange, onTap: onSelectCustom),
+                const SizedBox(width: 6),
+                _TimeRangeSegment(label: 'All time', selected: useAllTime, onTap: onSelectAllTime),
+              ],
+            ),
+            if (!useAllTime && !useDateRange) ...[
+              const SizedBox(height: 6),
+              Row(
+                children: [
+                  Text('Month', style: theme.textTheme.labelSmall?.copyWith(fontSize: 11)),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: FilledButton.tonal(
+                      style: FilledButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 4), minimumSize: Size.zero),
+                      onPressed: onSelectMonth,
+                      child: Text(month, style: const TextStyle(fontSize: 12)),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+            if (!useAllTime && useDateRange) ...[
+              const SizedBox(height: 6),
+              Row(
+                children: [
+                  Expanded(
+                    child: FilledButton.tonal(
+                      style: FilledButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 4), minimumSize: Size.zero),
+                      onPressed: onSelectFrom,
+                      child: Text(dateFrom.isEmpty ? 'From' : dateFrom, style: const TextStyle(fontSize: 11)),
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: FilledButton.tonal(
+                      style: FilledButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 4), minimumSize: Size.zero),
+                      onPressed: onSelectTo,
+                      child: Text(dateTo.isEmpty ? 'To' : dateTo, style: const TextStyle(fontSize: 11)),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Insights: when you spend more (time of day, day of month), top vendor, top category.
+class _InsightsSection extends StatelessWidget {
+  const _InsightsSection({this.insights});
+
+  final Map<String, dynamic>? insights;
+
+  static String _hourLabel(int hour) {
+    if (hour == 0) return 'midnight';
+    if (hour == 12) return 'noon';
+    if (hour < 12) return '${hour}am';
+    return '${hour - 12}pm';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (insights == null) return const SizedBox.shrink();
+    final theme = Theme.of(context);
+    final peakTime = insights!['peak_time_of_day'] as Map<String, dynamic>?;
+    final peakDay = insights!['peak_day_of_month'] as Map<String, dynamic>?;
+    final peakDayOfWeek = insights!['peak_day_of_week'] as Map<String, dynamic>?;
+    final topVendor = insights!['top_vendor'] as Map<String, dynamic>?;
+    final topCategory = insights!['top_category'] as Map<String, dynamic>?;
+    final spendingTrend = insights!['spending_trend'] as Map<String, dynamic>?;
+    final largestTx = insights!['largest_transaction'] as Map<String, dynamic>?;
+    final hasAny = peakTime != null || peakDay != null || peakDayOfWeek != null ||
+        topVendor != null || topCategory != null || spendingTrend != null || largestTx != null;
+    if (!hasAny) return const SizedBox.shrink();
+
+    final spacer = const SizedBox(height: 10);
+    var needSpacer = false;
+    Widget wrapSpacer(Widget child) {
+      final out = needSpacer ? Column(children: [spacer, child]) : child;
+      needSpacer = true;
+      return out;
+    }
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (peakTime != null)
+              wrapSpacer(_InsightRow(
+                question: 'When do you usually spend more (time of day)?',
+                answer: 'Around ${_hourLabel(peakTime['hour'] as int? ?? 12)} (EGP ${(peakTime['amount'] as num?)?.toStringAsFixed(0) ?? '0'} in that hour)',
+                theme: theme,
+              )),
+            if (peakDay != null)
+              wrapSpacer(_InsightRow(
+                question: 'When do you usually spend more (day of month)?',
+                answer: 'Around day ${peakDay['day']} (EGP ${(peakDay['amount'] as num?)?.toStringAsFixed(0) ?? '0'} on that day)',
+                theme: theme,
+              )),
+            if (peakDayOfWeek != null)
+              wrapSpacer(_InsightRow(
+                question: 'Busiest day of week (by spend)?',
+                answer: '${peakDayOfWeek['day_name'] ?? '—'} — EGP ${(peakDayOfWeek['amount'] as num?)?.toStringAsFixed(0) ?? '0'}',
+                theme: theme,
+              )),
+            if (topVendor != null)
+              wrapSpacer(_InsightRow(
+                question: 'What vendor is taking most of your money?',
+                answer: '${topVendor['name'] ?? '—'} — EGP ${(topVendor['amount'] as num?)?.toStringAsFixed(0) ?? '0'}',
+                theme: theme,
+              )),
+            if (topCategory != null)
+              wrapSpacer(_InsightRow(
+                question: 'What category is taking most of your spending?',
+                answer: '${topCategory['name'] ?? '—'} — EGP ${(topCategory['amount'] as num?)?.toStringAsFixed(0) ?? '0'}',
+                theme: theme,
+              )),
+            if (spendingTrend != null)
+              wrapSpacer(_InsightRow(
+                question: 'Spending trend vs previous period?',
+                answer: _trendAnswer(spendingTrend),
+                theme: theme,
+              )),
+            if (largestTx != null)
+              wrapSpacer(_InsightRow(
+                question: 'Largest transaction?',
+                answer: 'EGP ${(largestTx['amount'] as num?)?.toStringAsFixed(0) ?? '0'} — ${largestTx['merchant'] ?? '—'} (${largestTx['date'] ?? ''})',
+                theme: theme,
+              )),
+          ],
+        ),
+      ),
+    );
+  }
+
+  static String _trendAnswer(Map<String, dynamic> t) {
+    final trend = t['trend'] as String?;
+    final pct = (t['percent_change'] as num?)?.toDouble();
+    if (pct == null) return '—';
+    final dir = trend == 'up' ? 'Up' : (trend == 'down' ? 'Down' : 'Same');
+    final sign = pct >= 0 ? '+' : '';
+    return '$dir $sign${pct.toStringAsFixed(1)}% vs previous period';
+  }
+}
+
+class _InsightRow extends StatelessWidget {
+  const _InsightRow({required this.question, required this.answer, required this.theme});
+
+  final String question;
+  final String answer;
+  final ThemeData theme;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(question, style: theme.textTheme.labelMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+        const SizedBox(height: 2),
+        Text(answer, style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w500)),
+      ],
+    );
+  }
+}
+
+/// Prediction: AI-predicted total spend by end of month.
+class _PredictionSection extends StatelessWidget {
+  const _PredictionSection({required this.prediction});
+
+  final Map<String, dynamic> prediction;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final text = prediction['prediction_text'] as String? ?? '';
+    final total = prediction['predicted_total'] as num?;
+    final spent = prediction['spent_so_far'] as num?;
+    final daysRemaining = prediction['days_remaining'] as int?;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              'Given current spending, how much total spend is predicted by end of month?',
+              style: theme.textTheme.labelMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+            ),
+            const SizedBox(height: 8),
+            if (text.isNotEmpty)
+              Text(text, style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w500)),
+            if (total != null) ...[
+              const SizedBox(height: 6),
+              Text(
+                'Predicted total: EGP ${total.toStringAsFixed(0)}',
+                style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold),
+              ),
+            ],
+            if (spent != null || daysRemaining != null) ...[
+              const SizedBox(height: 4),
+              Text(
+                'Spent so far: EGP ${(spent ?? 0).toStringAsFixed(0)}${daysRemaining != null ? ' · $daysRemaining days left' : ''}',
+                style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Sorted horizontal bar chart: one row per category. Track = same (total budget); each category has its own color.
+/// Each category's segment starts exactly where the previous one ends (stacked within the same bar).
+class _SpendingByCategoryWaffle extends StatelessWidget {
+  const _SpendingByCategoryWaffle({required this.summaryItems});
+
+  final List<Map<String, dynamic>> summaryItems;
+
+  @override
+  Widget build(BuildContext context) {
+    final items = summaryItems.where((e) => ((e['actual'] as num?)?.toDouble() ?? 0) > 0).toList();
+    final total = items.fold<double>(0, (s, e) => s + ((e['actual'] as num?)?.toDouble() ?? 0));
+    if (items.isEmpty) return const SizedBox.shrink();
+    items.sort((a, b) => ((b['actual'] as num?)?.toDouble() ?? 0).compareTo((a['actual'] as num?)?.toDouble() ?? 0));
+    final pcts = items.map((e) => total > 0 ? ((e['actual'] as num?)?.toDouble() ?? 0) / total : 0.0).toList();
+    var cumul = 0.0;
+    final starts = pcts.map((p) {
+      final s = cumul;
+      cumul += p;
+      return s;
+    }).toList();
+    final theme = Theme.of(context);
+    const rowHeight = 28.0;
+    const labelWidth = 110.0;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              'Percentage of total spend (%)',
+              style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+            ),
+            const SizedBox(height: 8),
+            for (var i = 0; i < items.length; i++) ...[
+              if (i > 0) const SizedBox(height: 6),
+              SizedBox(
+                height: rowHeight,
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    SizedBox(
+                      width: labelWidth,
+                      child: Text(
+                        items[i]['category_name'] as String? ?? '—',
+                        style: theme.textTheme.bodySmall?.copyWith(fontWeight: FontWeight.w500),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: LayoutBuilder(
+                        builder: (_, constraints) {
+                          final barAreaWidth = constraints.maxWidth;
+                          final startOffset = (starts[i] * barAreaWidth).clamp(0.0, barAreaWidth);
+                          final segWidth = (pcts[i] * barAreaWidth).clamp(0.0, barAreaWidth - startOffset);
+                          return Stack(
+                            alignment: Alignment.centerLeft,
+                            children: [
+                              Container(
+                                height: 14,
+                                decoration: BoxDecoration(
+                                  color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                              ),
+                              Positioned(
+                                left: startOffset,
+                                width: segWidth,
+                                child: Container(
+                                  height: 14,
+                                  decoration: BoxDecoration(
+                                    color: _chartColors[i % _chartColors.length],
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          );
+                        },
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    SizedBox(
+                      width: 36,
+                      child: Text(
+                        '${(pcts[i] * 100).toStringAsFixed(0)}%',
+                        style: theme.textTheme.bodySmall?.copyWith(fontWeight: FontWeight.w600),
+                        textAlign: TextAlign.end,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Speed-dial FAB: single + button; when expanded, shows Add / Voice / SMS above.
+class _HomeFab extends StatelessWidget {
+  const _HomeFab({
+    required this.expanded,
+    required this.onToggle,
+    required this.onAdd,
+    required this.onVoice,
+    required this.onSms,
+  });
+
+  final bool expanded;
+  final VoidCallback onToggle;
+  final VoidCallback onAdd;
+  final VoidCallback onVoice;
+  final VoidCallback onSms;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        if (expanded) ...[
+          _FabOption(icon: Icons.add, label: 'Add transaction', onTap: onAdd),
+          const SizedBox(height: 8),
+          _FabOption(icon: Icons.mic, label: 'Voice', onTap: onVoice),
+          const SizedBox(height: 8),
+          _FabOption(icon: Icons.sms, label: 'Message', onTap: onSms),
+          const SizedBox(height: 12),
+        ],
+        AnimatedRotation(
+          turns: expanded ? 0.125 : 0,
+          duration: const Duration(milliseconds: 200),
+          child: FloatingActionButton(
+            heroTag: 'home_fab',
+            onPressed: onToggle,
+            child: Icon(expanded ? Icons.close : Icons.add),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _FabOption extends StatelessWidget {
+  const _FabOption({required this.icon, required this.label, required this.onTap});
+
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.only(right: 12),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Material(
+            elevation: 2,
+            borderRadius: BorderRadius.circular(20),
+            color: theme.colorScheme.surfaceContainerHigh,
+            child: InkWell(
+              onTap: onTap,
+              borderRadius: BorderRadius.circular(20),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                child: Text(label, style: theme.textTheme.labelLarge),
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          FloatingActionButton.small(
+            heroTag: label,
+            onPressed: onTap,
+            child: Icon(icon),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _TimeRangeSegment extends StatelessWidget {
   const _TimeRangeSegment({
     required this.label,
@@ -666,10 +1031,11 @@ class _TimeRangeSegment extends StatelessWidget {
         onTap: onTap,
         borderRadius: BorderRadius.circular(8),
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
           child: Text(
             label,
-            style: Theme.of(context).textTheme.labelLarge?.copyWith(
+            style: Theme.of(context).textTheme.labelMedium?.copyWith(
+              fontSize: 12,
               fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
               color: selected ? Theme.of(context).colorScheme.onPrimaryContainer : Theme.of(context).colorScheme.onSurface,
             ),
@@ -685,39 +1051,43 @@ class _SummaryCard extends StatelessWidget {
     required this.label,
     required this.value,
     required this.valueColor,
+    this.prominent = false,
   });
 
   final String label;
   final String value;
   final Color valueColor;
+  final bool prominent;
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     return Card(
       child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+        padding: EdgeInsets.symmetric(vertical: prominent ? 16 : 12, horizontal: 10),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Text(
               label,
-              style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
-                  ),
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+                fontSize: prominent ? 12 : null,
+              ),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
             ),
-            const SizedBox(height: 4),
+            SizedBox(height: prominent ? 6 : 4),
             FittedBox(
               fit: BoxFit.scaleDown,
               alignment: Alignment.centerLeft,
               child: Text(
                 value,
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.w600,
-                      color: valueColor,
-                    ),
+                style: (prominent ? theme.textTheme.headlineSmall : theme.textTheme.titleMedium)?.copyWith(
+                  fontWeight: FontWeight.bold,
+                  color: valueColor,
+                ),
               ),
             ),
           ],
@@ -754,15 +1124,31 @@ class _SummaryCategoryCard extends StatelessWidget {
           )
         : theme.textTheme.titleSmall;
     final diffColor = diff >= 0 ? theme.colorScheme.tertiary : theme.colorScheme.error;
+    final isOverOrZero = diff <= 0;
+    final progressBarColor = isOverOrZero ? theme.colorScheme.error : theme.colorScheme.primary;
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
+      color: isOverOrZero ? theme.colorScheme.errorContainer.withValues(alpha: 0.35) : null,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text(name, style: textStyle, maxLines: 1, overflow: TextOverflow.ellipsis),
+            Row(
+              children: [
+                Expanded(child: Text(name, style: textStyle, maxLines: 1, overflow: TextOverflow.ellipsis)),
+                if (isOverOrZero)
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.warning_amber_rounded, size: 16, color: theme.colorScheme.error),
+                      const SizedBox(width: 4),
+                      Text('Over budget', style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.error, fontWeight: FontWeight.w600)),
+                    ],
+                  ),
+              ],
+            ),
             const SizedBox(height: 8),
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -793,7 +1179,7 @@ class _SummaryCategoryCard extends StatelessWidget {
               child: LinearProgressIndicator(
                 value: progress > 1 ? 1.0 : progress,
                 backgroundColor: theme.colorScheme.surfaceContainerHighest,
-                color: progress > 1 ? theme.colorScheme.error : theme.colorScheme.primary,
+                color: progressBarColor,
                 minHeight: 6,
               ),
             ),
