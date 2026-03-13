@@ -546,6 +546,8 @@ class _HomeScreenState extends State<HomeScreen> {
                     else
                       ..._transactions.take(10).map((t) {
                         final amt = (t['amount'] as num?)?.toDouble() ?? 0;
+                        final currency = (t['currency'] as String?)?.trim().toUpperCase() ?? 'EGP';
+                        final egpVal = t['egp_value'] as num?;
                         final cat = t['category'] as Map?;
                         final name = cat?['name'] ?? '—';
                         return ListTile(
@@ -554,12 +556,27 @@ class _HomeScreenState extends State<HomeScreen> {
                           ),
                           title: Text(t['merchant']?.toString() ?? name),
                           subtitle: Text(t['date']?.toString() ?? ''),
-                          trailing: Text(
-                            'EGP ${amt.toStringAsFixed(2)}',
-                            style: TextStyle(
-                              fontWeight: FontWeight.w600,
-                              color: Theme.of(context).colorScheme.primary,
-                            ),
+                          trailing: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children: [
+                              Text(
+                                '${amt.toStringAsFixed(2)} $currency',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w600,
+                                  color: Theme.of(context).colorScheme.primary,
+                                ),
+                              ),
+                              if (currency != 'EGP' && egpVal != null) ...[
+                                const SizedBox(height: 2),
+                                Text(
+                                  '≈ ${egpVal.toStringAsFixed(2)} EGP',
+                                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                                  ),
+                                ),
+                              ],
+                            ],
                           ),
                         );
                       }),

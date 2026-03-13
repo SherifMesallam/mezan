@@ -269,26 +269,33 @@ importRouter.post('/sms-merge-preview', async (req: AuthRequest, res) => {
       const resolvedCategoryName = resolvedCategoryId ? categoryIdToName.get(resolvedCategoryId) ?? resolvedCategoryId : null;
       const amountLo = ext.amount - 30;
       const amountHi = ext.amount + 30;
+      const extCurrency = (ext.currency && String(ext.currency).trim().toUpperCase().slice(0, 3)) || 'EGP';
 
-      function candidatesForDateRange(dateFrom: string, dateTo: string) {
-        if (resolvedCategoryId == null) return [];
+      function sameCurrency(t: { currency: string }): boolean {
+        const c = (t.currency && String(t.currency).trim().toUpperCase().slice(0, 3)) || 'EGP';
+        return c === extCurrency;
+      }
+
+      function candidatesForDateRange(dateFrom: string, dateTo: string, requireCategory: boolean) {
         return existingTx.filter((t) => {
           const amt = toAmountNum(t);
-          return (
-            t.categoryId === resolvedCategoryId &&
-            amt >= amountLo &&
-            amt <= amountHi &&
-            t.date >= dateFrom &&
-            t.date <= dateTo
-          );
+          const amountOk = amt >= amountLo && amt <= amountHi;
+          const dateOk = t.date >= dateFrom && t.date <= dateTo;
+          const currencyOk = sameCurrency(t);
+          const categoryOk = !requireCategory || t.categoryId === resolvedCategoryId;
+          return currencyOk && amountOk && dateOk && categoryOk;
         });
       }
 
       let dateFrom = dateAddDays(dateNorm, -2);
       let dateTo = dateAddDays(dateNorm, 2);
-      let candidates = candidatesForDateRange(dateFrom, dateTo);
+      let candidates = candidatesForDateRange(dateFrom, dateTo, true);
       let dateUsed = dateNorm;
       let dateCorrected = false;
+
+      if (candidates.length === 0) {
+        candidates = candidatesForDateRange(dateFrom, dateTo, false);
+      }
 
       // If no match and date is ambiguous (month/day both <= 12), try swapped interpretation (LLM often outputs YYYY-DD-MM as YYYY-MM-DD).
       if (candidates.length === 0) {
@@ -296,7 +303,8 @@ importRouter.post('/sms-merge-preview', async (req: AuthRequest, res) => {
         if (swapped) {
           const dateFromSwap = dateAddDays(swapped, -2);
           const dateToSwap = dateAddDays(swapped, 2);
-          const candidatesSwap = candidatesForDateRange(dateFromSwap, dateToSwap);
+          let candidatesSwap = candidatesForDateRange(dateFromSwap, dateToSwap, true);
+          if (candidatesSwap.length === 0) candidatesSwap = candidatesForDateRange(dateFromSwap, dateToSwap, false);
           if (candidatesSwap.length > 0) {
             candidates = candidatesSwap;
             dateFrom = dateFromSwap;
@@ -320,6 +328,7 @@ importRouter.post('/sms-merge-preview', async (req: AuthRequest, res) => {
         JSON.stringify({
           extracted: {
             amount: ext.amount,
+            currency: ext.currency,
             date_raw: ext.date,
             date_normalized: dateNorm,
             date_swapped_tried: trySwapDayMonth(dateNorm) ?? undefined,
@@ -330,10 +339,10 @@ importRouter.post('/sms-merge-preview', async (req: AuthRequest, res) => {
           resolved_category: resolvedCategoryId
             ? { id: resolvedCategoryId, name: resolvedCategoryName }
             : null,
-          filter: { amountLo, amountHi, dateFrom, dateTo },
+          filter: { amountLo, amountHi, dateFrom, dateTo, currency: extCurrency },
           candidates_count: candidates.length,
           result: best
-            ? { id: best.id, amount: toAmountNum(best), date: best.date, category: best.category?.name }
+            ? { id: best.id, amount: toAmountNum(best), currency: (best as { currency?: string }).currency, date: best.date, category: best.category?.name }
             : 'no match',
         })
       );

@@ -115,6 +115,8 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
                           itemBuilder: (context, i) {
                             final t = _transactions[i];
                             final amt = (t['amount'] as num?)?.toDouble() ?? 0;
+                            final currency = (t['currency'] as String?)?.trim().toUpperCase() ?? 'EGP';
+                            final egpVal = t['egp_value'] as num?;
                             final cat = t['category'] as Map?;
                             final name = cat?['name'] ?? '—';
                             return ListTile(
@@ -123,12 +125,27 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
                               ),
                               title: Text(t['merchant']?.toString() ?? name),
                               subtitle: Text(t['date']?.toString() ?? ''),
-                              trailing: Text(
-                                'EGP ${amt.toStringAsFixed(2)}',
-                                style: TextStyle(
-                                  fontWeight: FontWeight.w600,
-                                  color: Theme.of(context).colorScheme.primary,
-                                ),
+                              trailing: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                crossAxisAlignment: CrossAxisAlignment.end,
+                                children: [
+                                  Text(
+                                    '${amt.toStringAsFixed(2)} $currency',
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.w600,
+                                      color: Theme.of(context).colorScheme.primary,
+                                    ),
+                                  ),
+                                  if (currency != 'EGP' && egpVal != null) ...[
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      '≈ ${egpVal.toStringAsFixed(2)} EGP',
+                                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                                      ),
+                                    ),
+                                  ],
+                                ],
                               ),
                               onTap: () => _openEdit(context, t),
                             );
@@ -211,9 +228,12 @@ class _EditTransactionSheet extends StatefulWidget {
 }
 
 class _EditTransactionSheetState extends State<_EditTransactionSheet> {
+  static const List<String> _currencyOptions = ['EGP', 'USD', 'EUR', 'GBP', 'SAR', 'AED', 'KWD'];
   late TextEditingController _amountController;
   late TextEditingController _merchantController;
+  late TextEditingController _egpValueController;
   late String _categoryId;
+  late String _currency;
   late List<String> _tagIds;
   late DateTime _date;
   late TimeOfDay _time;
@@ -230,6 +250,13 @@ class _EditTransactionSheetState extends State<_EditTransactionSheet> {
     final amt = (t['amount'] as num?)?.toDouble() ?? 0;
     _amountController = TextEditingController(text: amt.toString());
     _merchantController = TextEditingController(text: t['merchant']?.toString() ?? '');
+    final rawCur = (t['currency'] as String?)?.trim().toUpperCase() ?? 'EGP';
+    _currency = rawCur.length >= 3 ? rawCur.substring(0, 3) : 'EGP';
+    if (!_currencyOptions.contains(_currency)) _currency = 'EGP';
+    final egpVal = t['egp_value'] as num?;
+    _egpValueController = TextEditingController(
+      text: egpVal != null ? egpVal.toString() : '',
+    );
     _categoryId = t['category_id'] ?? (t['category'] as Map?)?['id'] ?? '';
     _tagIds = List<String>.from(t['tag_ids'] ?? (t['tags'] as List?)?.map((x) => (x as Map)['id'] as String).toList() ?? []);
     final dateStr = t['date']?.toString() ?? '';
@@ -255,6 +282,7 @@ class _EditTransactionSheetState extends State<_EditTransactionSheet> {
   void dispose() {
     _amountController.dispose();
     _merchantController.dispose();
+    _egpValueController.dispose();
     super.dispose();
   }
 
@@ -298,17 +326,23 @@ class _EditTransactionSheetState extends State<_EditTransactionSheet> {
       final api = Api(baseUrl: state.effectiveBaseUrl, token: state.token);
       final dateStr = '${_date.year}-${_date.month.toString().padLeft(2, '0')}-${_date.day.toString().padLeft(2, '0')}';
       final timeStr = '${_time.hour.toString().padLeft(2, '0')}:${_time.minute.toString().padLeft(2, '0')}';
-      final raw = (widget.transaction['currency'] as String?)?.trim().toUpperCase() ?? 'EGP';
-      final currency = raw.length >= 3 ? raw.substring(0, 3) : raw;
-      await api.patch('/v1/transactions/${widget.transaction['id']}', {
+      final body = <String, dynamic>{
         'amount': amount,
-        'currency': currency,
+        'currency': _currency,
         'category_id': _categoryId,
         'date': dateStr,
         'time': timeStr,
         'tag_ids': _tagIds,
         'merchant': _merchantController.text.trim().isEmpty ? null : _merchantController.text.trim(),
-      });
+      };
+      if (_currency != 'EGP') {
+        final egpStr = _egpValueController.text.trim();
+        if (egpStr.isNotEmpty) {
+          final egpNum = double.tryParse(egpStr);
+          if (egpNum != null && egpNum >= 0) body['egp_value'] = egpNum;
+        }
+      }
+      await api.patch('/v1/transactions/${widget.transaction['id']}', body);
       if (mounted) widget.onSaved();
     } on ApiException catch (e) {
       if (mounted) setState(() => _error = e.message);
@@ -367,11 +401,32 @@ class _EditTransactionSheetState extends State<_EditTransactionSheet> {
               TextField(
                 controller: _amountController,
                 decoration: InputDecoration(
-                  labelText: 'Amount (${(widget.transaction['currency'] as String?)?.toUpperCase() ?? 'EGP'})',
+                  labelText: 'Amount ($_currency)',
                   border: const OutlineInputBorder(),
                 ),
                 keyboardType: const TextInputType.numberWithOptions(decimal: true),
               ),
+              const SizedBox(height: 12),
+              const Text('Currency', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500)),
+              const SizedBox(height: 4),
+              DropdownButtonFormField<String>(
+                value: _currencyOptions.contains(_currency) ? _currency : 'EGP',
+                decoration: const InputDecoration(border: OutlineInputBorder()),
+                items: _currencyOptions.map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
+                onChanged: (v) => setState(() => _currency = v ?? 'EGP'),
+              ),
+              if (_currency != 'EGP') ...[
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _egpValueController,
+                  decoration: const InputDecoration(
+                    labelText: 'Equivalent in EGP (optional)',
+                    hintText: 'Used in totals and budgets',
+                    border: OutlineInputBorder(),
+                  ),
+                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                ),
+              ],
               const SizedBox(height: 12),
               TextField(
                 controller: _merchantController,
