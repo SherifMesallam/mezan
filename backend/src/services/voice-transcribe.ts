@@ -3,7 +3,6 @@
  * Accepts base64-encoded audio; returns plain text.
  */
 
-const WHISPER_URL = 'https://api.openai.com/v1/audio/transcriptions';
 const MAX_FILE_SIZE_BYTES = 24 * 1024 * 1024; // 24 MB (API limit 25 MB)
 
 function extensionFromMime(mimeType: string): string {
@@ -24,7 +23,10 @@ function extensionFromMime(mimeType: string): string {
 
 export interface TranscribeConfig {
   apiKey: string;
+  /** Base URL for chat/completions; may not support Whisper. */
   baseURL?: string;
+  /** Base URL for Whisper (e.g. https://api.openai.com). Use when baseURL is a proxy that 404s on /v1/audio/transcriptions. */
+  whisperBaseURL?: string;
 }
 
 /**
@@ -44,8 +46,13 @@ export async function transcribeAudio(
     throw new Error(`Audio file too large (max ${MAX_FILE_SIZE_BYTES / 1024 / 1024} MB).`);
   }
 
-  const baseURL = (config.baseURL || 'https://api.openai.com').replace(/\/$/, '');
-  const url = `${baseURL}/v1/audio/transcriptions`;
+  const defaultOpenAI = 'https://api.openai.com';
+  let whisperBase = config.whisperBaseURL ?? config.baseURL ?? defaultOpenAI;
+  if (whisperBase && !config.whisperBaseURL && !/^https:\/\/api\.openai\.com(\/|$)/i.test(whisperBase)) {
+    whisperBase = defaultOpenAI;
+  }
+  whisperBase = whisperBase.replace(/\/$/, '');
+  const url = `${whisperBase}/v1/audio/transcriptions`;
   const ext = extensionFromMime(mimeType);
   const filename = `audio.${ext}`;
 

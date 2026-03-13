@@ -25,6 +25,10 @@ dependencies:
   share_plus: ^7.2.1
   record: ^5.0.4
 
+dependency_overrides:
+  # record_linux 0.7.2 does not implement startStream/hasPermission(request); 1.3.0 does (fixes iOS build).
+  record_linux: ^1.3.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

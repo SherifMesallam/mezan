@@ -412,7 +412,12 @@ importRouter.post('/voice-merge-preview', async (req: AuthRequest, res) => {
     }
 
     const baseURL = process.env.OPENAI_BASE_URL?.trim() || undefined;
-    const transcribed = await transcribeAudio({ apiKey, baseURL }, audioBase64, mimeType);
+    const whisperBaseURL = process.env.OPENAI_WHISPER_BASE_URL?.trim() || undefined;
+    const transcribed = await transcribeAudio(
+      { apiKey, baseURL, whisperBaseURL },
+      audioBase64,
+      mimeType
+    );
     const rawText = transcribed.trim();
     if (!rawText) {
       res.json({ items: [] });
