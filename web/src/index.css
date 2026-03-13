@@ -2099,6 +2099,92 @@ textarea.input {
   color: var(--mezan-text);
 }
 
+/* Step-by-step progress bar */
+.sms-wizard-bar--step {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.sms-wizard-progress {
+  position: relative;
+  height: 8px;
+  background: var(--mezan-border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.sms-wizard-progress-bar {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  background: var(--mezan-accent);
+  border-radius: 4px;
+  transition: width 0.2s ease;
+}
+
+.sms-wizard-progress-text {
+  margin: 0.5rem 0 0;
+  font-size: 0.9rem;
+  color: var(--mezan-text-muted);
+}
+
+/* Step-by-step card */
+.sms-wizard-step-card {
+  padding: 1.25rem;
+}
+
+.sms-wizard-step-source {
+  margin-bottom: 1rem;
+}
+
+.sms-wizard-step-source .sms-snippet {
+  margin-bottom: 0.5rem;
+}
+
+.sms-wizard-step-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  font-size: 0.9rem;
+}
+
+.sms-wizard-step-meta span {
+  color: var(--mezan-text-muted);
+}
+
+.sms-wizard-step-meta strong {
+  color: var(--mezan-text);
+}
+
+.sms-wizard-step-match,
+.sms-wizard-step-tags {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--mezan-border);
+}
+
+.sms-wizard-step-label {
+  margin: 0 0 0.5rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--mezan-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.sms-wizard-step-actions {
+  margin-top: 1.25rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--mezan-border);
+}
+
+.sms-wizard-step-hint {
+  margin: 0 0 0.75rem;
+  font-size: 0.85rem;
+  color: var(--mezan-text-muted);
+}
+
 .sms-wizard-error {
   margin-bottom: 0.75rem;
 }

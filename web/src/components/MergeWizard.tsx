@@ -44,6 +44,10 @@ type Props = {
   setResult: (r: { created: number; skipped: number; discarded?: number } | null) => void;
   resetButtonLabel?: string;
   sourceColumnLabel?: string;
+  /** When true, show one transaction at a time with progress bar; save immediately on each action. */
+  stepByStep?: boolean;
+  /** API path for confirm, e.g. 'sms-merge-confirm' or 'image-merge-confirm'. */
+  confirmPath?: string;
 };
 
 export function MergeWizard({
@@ -53,6 +57,8 @@ export function MergeWizard({
   setResult,
   resetButtonLabel = 'Paste again',
   sourceColumnLabel = 'From SMS',
+  stepByStep = true,
+  confirmPath = 'sms-merge-confirm',
 }: Props) {
   const [actionByIndex, setActionByIndex] = useState<Record<number, Action>>({});
   const [amountByIndex, setAmountByIndex] = useState<Record<number, string>>({});
@@ -71,6 +77,16 @@ export function MergeWizard({
   const [viewPopupEntry, setViewPopupEntry] = useState<MatchedEntry | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState('');
+  const [pendingItems, setPendingItems] = useState<MergePreviewItem[]>([]);
+  const [stepResult, setStepResult] = useState({ created: 0, skipped: 0, discarded: 0 });
+  const [stepProcessing, setStepProcessing] = useState(false);
+
+  useEffect(() => {
+    if (stepByStep && items.length > 0) {
+      setPendingItems([...items]);
+      setStepResult({ created: 0, skipped: 0, discarded: 0 });
+    }
+  }, [stepByStep, items]);
 
   useEffect(() => {
     const initial: Record<number, Action> = {};
@@ -201,39 +217,72 @@ export function MergeWizard({
     });
   }
 
+  function buildPayloadForItem(it: MergePreviewItem, actionOverride?: Action) {
+    const action = actionOverride ?? actionByIndex[it.sheet_index] ?? getDefaultAction(it);
+    const base = { sheet_index: it.sheet_index, action };
+    const tagIds = tagIdsByIndex[it.sheet_index];
+    if (action === 'discard') return base;
+    if (action === 'add_new') {
+      const categoryId = categoryIdByIndex[it.sheet_index];
+      return {
+        ...base,
+        amount: getAmount(it),
+        currency: getCurrency(it),
+        date: getDate(it),
+        time: getTime(it),
+        merchant: getMerchant(it),
+        category_name: getCategoryName(it),
+        ...(categoryId ? { category_id: categoryId } : {}),
+        ...(Array.isArray(tagIds) && tagIds.length > 0 ? { tag_ids: tagIds } : {}),
+      };
+    }
+    const displayMatch = getDisplayMatch(it);
+    return {
+      ...base,
+      ...(displayMatch ? { matched_entry_id: displayMatch.id } : {}),
+      ...(Array.isArray(tagIds) && tagIds.length > 0 ? { tag_ids: tagIds } : {}),
+    };
+  }
+
+  async function handleStepAction(actionOverride: Action) {
+    const current = pendingItems[0];
+    if (!current || !token) return;
+    setError('');
+    setStepProcessing(true);
+    try {
+      const payload = buildPayloadForItem(current, actionOverride);
+      const res = await api<{ created: { id: string }[]; count: number; skipped: number; discarded?: number }>(
+        `/v1/import/${confirmPath}`,
+        { method: 'POST', token, body: { items: [payload] } }
+      );
+      const addCreated = res.count ?? 0;
+      const addSkipped = res.skipped ?? 0;
+      const addDiscarded = res.discarded ?? 0;
+      const isLast = pendingItems.length <= 1;
+      const newCreated = stepResult.created + addCreated;
+      const newSkipped = stepResult.skipped + addSkipped;
+      const newDiscarded = stepResult.discarded + addDiscarded;
+      setStepResult({ created: newCreated, skipped: newSkipped, discarded: newDiscarded });
+      setPendingItems((prev) => prev.slice(1));
+      if (isLast) {
+        setResult({ created: newCreated, skipped: newSkipped, discarded: newDiscarded });
+        onReset();
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to save transaction');
+    } finally {
+      setStepProcessing(false);
+    }
+  }
+
   async function handleConfirm() {
     if (!items.length || !token) return;
     setError('');
     setConfirming(true);
     try {
-      const payload = items.map((it) => {
-        const action = actionByIndex[it.sheet_index] ?? getDefaultAction(it);
-        const base = { sheet_index: it.sheet_index, action };
-        const tagIds = tagIdsByIndex[it.sheet_index];
-        if (action === 'discard') return base;
-        if (action === 'add_new') {
-          const categoryId = categoryIdByIndex[it.sheet_index];
-          return {
-            ...base,
-            amount: getAmount(it),
-            currency: getCurrency(it),
-            date: getDate(it),
-            time: getTime(it),
-            merchant: getMerchant(it),
-            category_name: getCategoryName(it),
-            ...(categoryId ? { category_id: categoryId } : {}),
-            ...(Array.isArray(tagIds) && tagIds.length > 0 ? { tag_ids: tagIds } : {}),
-          };
-        }
-        const displayMatch = getDisplayMatch(it);
-        return {
-          ...base,
-          ...(displayMatch ? { matched_entry_id: displayMatch.id } : {}),
-          ...(Array.isArray(tagIds) && tagIds.length > 0 ? { tag_ids: tagIds } : {}),
-        };
-      });
+      const payload = items.map((it) => buildPayloadForItem(it));
       const res = await api<{ created: { id: string }[]; count: number; skipped: number; discarded?: number }>(
-        '/v1/import/sms-merge-confirm',
+        `/v1/import/${confirmPath}`,
         { method: 'POST', token, body: { items: payload } }
       );
       setResult({
@@ -250,6 +299,277 @@ export function MergeWizard({
   }
 
   const addNewCount = items.filter((it) => (actionByIndex[it.sheet_index] ?? getDefaultAction(it)) === 'add_new').length;
+
+  const currentStepItem = stepByStep ? pendingItems[0] : null;
+  const totalSteps = items.length;
+  const stepIndex = totalSteps > 0 ? totalSteps - pendingItems.length + 1 : 0;
+
+  if (stepByStep && currentStepItem) {
+    const displayMatch = getDisplayMatch(currentStepItem);
+    const action = actionByIndex[currentStepItem.sheet_index] ?? getDefaultAction(currentStepItem);
+    const it = currentStepItem;
+    return (
+      <>
+        <div className="sms-wizard-bar sms-wizard-bar--step">
+          <div className="sms-wizard-progress">
+            <div className="sms-wizard-progress-bar" style={{ width: totalSteps > 0 ? `${(stepIndex / totalSteps) * 100}%` : '0%' }} />
+            <p className="sms-wizard-progress-text">
+              Transaction {stepIndex} of {totalSteps} · {pendingItems.length} left
+            </p>
+          </div>
+          <button type="button" className="btn btn-secondary" onClick={onReset}>
+            {resetButtonLabel}
+          </button>
+        </div>
+
+        {error && <p className="error sms-wizard-error">{error}</p>}
+
+        <div className="sms-wizard-step-card card">
+          <div className="sms-wizard-step-source">
+            {it.source_snippet && (
+              <div className="sms-snippet" title="Source for this transaction">
+                {it.source_snippet}
+              </div>
+            )}
+            <div className="sms-edit-fields">
+              <label className="sms-edit-label">
+                Amount
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  className="input sms-edit-input"
+                  value={amountByIndex[it.sheet_index] ?? ''}
+                  onChange={(e) => setAmountByIndex((p) => ({ ...p, [it.sheet_index]: e.target.value }))}
+                  placeholder={String(it.amount)}
+                />
+              </label>
+              <label className="sms-edit-label">
+                Currency
+                <input
+                  type="text"
+                  className="input sms-edit-input"
+                  value={currencyByIndex[it.sheet_index] ?? ''}
+                  onChange={(e) => setCurrencyByIndex((p) => ({ ...p, [it.sheet_index]: e.target.value }))}
+                  placeholder={it.currency}
+                />
+              </label>
+              <label className="sms-edit-label">
+                Date
+                <input
+                  type="text"
+                  className="input sms-edit-input"
+                  value={dateByIndex[it.sheet_index] ?? ''}
+                  onChange={(e) => setDateByIndex((p) => ({ ...p, [it.sheet_index]: e.target.value }))}
+                  placeholder={it.date}
+                  title="YYYY-MM-DD"
+                />
+              </label>
+              <label className="sms-edit-label">
+                Time
+                <input
+                  type="text"
+                  className="input sms-edit-input"
+                  value={timeByIndex[it.sheet_index] ?? ''}
+                  onChange={(e) => setTimeByIndex((p) => ({ ...p, [it.sheet_index]: e.target.value }))}
+                  placeholder={it.time ?? ''}
+                />
+              </label>
+              <label className="sms-edit-label">
+                Merchant
+                <input
+                  type="text"
+                  className="input sms-edit-input"
+                  value={merchantByIndex[it.sheet_index] ?? it.merchant ?? ''}
+                  onChange={(e) => setMerchant(it.sheet_index, e.target.value)}
+                  placeholder="Merchant name"
+                />
+              </label>
+              <label className="sms-edit-label">
+                Category
+                {categories.length > 0 ? (
+                  <select
+                    className="input sms-edit-input"
+                    value={categoryIdByIndex[it.sheet_index] ?? categories.find((c) => c.name === it.category_name)?.id ?? categories[0]?.id ?? ''}
+                    onChange={(e) => setCategory(it.sheet_index, e.target.value)}
+                  >
+                    {categories.map((c) => (
+                      <option key={c.id} value={c.id}>{c.name}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <span className="sms-row-meta">Loading…</span>
+                )}
+              </label>
+            </div>
+            <div className="sms-row-meta sms-edit-summary">
+              {getCurrency(it)} {getAmount(it).toFixed(2)} · {getDate(it)}
+              {getTime(it) ? ` ${getTime(it)}` : ''}
+              {getCategoryName(it) ? ` · ${getCategoryName(it)}` : ''}
+              {getMerchant(it) ? ` · ${getMerchant(it)}` : ''}
+            </div>
+          </div>
+
+          <div className="sms-wizard-step-match">
+            <h4 className="sms-wizard-step-label">Matched existing</h4>
+            {displayMatch ? (
+              <div>
+                <div className="sms-row-amount">{displayMatch.amount.toFixed(2)} · {displayMatch.date}</div>
+                <div className="sms-row-meta">
+                  {displayMatch.category_name}
+                  {displayMatch.merchant ? ` · ${displayMatch.merchant}` : ''}
+                </div>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  style={{ padding: '0.25rem 0.5rem', fontSize: '0.8rem', marginTop: '0.25rem' }}
+                  onClick={() => setViewPopupEntry(displayMatch)}
+                >
+                  View
+                </button>
+                {manualMatchByIndex[it.sheet_index] && (
+                  <span className="sms-row-meta" style={{ marginLeft: '0.5rem' }}>(manual)</span>
+                )}
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+                <span className="sms-row-meta">— No match</span>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  style={{ padding: '0.3rem 0.5rem', fontSize: '0.8rem', alignSelf: 'flex-start' }}
+                  onClick={() => openMatchPicker(it.sheet_index)}
+                >
+                  Match to a transaction
+                </button>
+              </div>
+            )}
+          </div>
+
+          {tags.length > 0 && (
+            <div className="sms-wizard-step-tags">
+              <h4 className="sms-wizard-step-label">Tags</h4>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem' }}>
+                {tags.map((tag) => {
+                  const selected = (tagIdsByIndex[it.sheet_index] ?? []).includes(tag.id);
+                  return (
+                    <label key={tag.id} style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.8rem', cursor: 'pointer' }}>
+                      <input type="checkbox" checked={selected} onChange={() => toggleTag(it.sheet_index, tag.id)} />
+                      <span>{tag.name}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          <div className="sms-wizard-step-actions">
+            <p className="sms-wizard-step-hint">
+              {action === 'discard'
+                ? '✓ Row will be ignored'
+                : action === 'skip'
+                  ? '✓ Will not create (matched to existing)'
+                  : '✓ Will create as new transaction'}
+            </p>
+            <div className="sms-action-btns">
+              <button
+                type="button"
+                className={action === 'skip' ? 'btn btn-primary' : 'btn btn-secondary'}
+                onClick={() => void handleStepAction('skip')}
+                disabled={stepProcessing}
+              >
+                {stepProcessing ? 'Saving…' : 'Confirm match'}
+              </button>
+              <button
+                type="button"
+                className={action === 'add_new' ? 'btn btn-primary' : 'btn btn-secondary'}
+                onClick={() => void handleStepAction('add_new')}
+                disabled={stepProcessing}
+              >
+                {stepProcessing ? 'Saving…' : 'Add as new'}
+              </button>
+              <button
+                type="button"
+                className={action === 'discard' ? 'btn btn-primary' : 'btn btn-secondary'}
+                onClick={() => void handleStepAction('discard')}
+                disabled={stepProcessing}
+              >
+                {stepProcessing ? 'Saving…' : 'Discard'}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {viewPopupEntry != null && (
+          <div className="sms-modal-backdrop" style={{ zIndex: 1001 }} onClick={() => setViewPopupEntry(null)}>
+            <div className="sms-modal" onClick={(e) => e.stopPropagation()}>
+              <div className="sms-modal-header">
+                <h3>Transaction</h3>
+                <button type="button" className="btn btn-primary" onClick={() => setViewPopupEntry(null)}>Close</button>
+              </div>
+              <div className="sms-modal-body">
+                <dl className="sms-dl">
+                  <dt>Amount</dt><dd>{viewPopupEntry.amount.toFixed(2)}</dd>
+                  <dt>Date</dt><dd>{viewPopupEntry.date}</dd>
+                  <dt>Category</dt><dd>{viewPopupEntry.category_name || '—'}</dd>
+                  <dt>Merchant</dt><dd>{viewPopupEntry.merchant || '—'}</dd>
+                </dl>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {pickerForSheetIndex != null && (
+          <div className="sms-modal-backdrop" onClick={() => setPickerForSheetIndex(null)}>
+            <div className="sms-modal sms-modal--wide" onClick={(e) => e.stopPropagation()}>
+              <div className="sms-modal-header">
+                <h3>Match to a transaction</h3>
+              </div>
+              <div className="sms-modal-body">
+                <p className="sms-modal-intro">
+                  Choose the existing transaction that matches this row. The row will be treated as a duplicate and not added.
+                </p>
+                {pickerLoading ? (
+                  <p className="sms-row-meta">Loading transactions…</p>
+                ) : pickerTransactions.length === 0 ? (
+                  <p className="sms-row-meta">No transactions found.</p>
+                ) : (
+                  <ul className="sms-picker-list">
+                    {pickerTransactions.map((tx) => (
+                      <li
+                        key={tx.id}
+                        className="sms-picker-item"
+                        onClick={() => selectManualMatch(tx)}
+                        onKeyDown={(e) => e.key === 'Enter' && selectManualMatch(tx)}
+                        role="button"
+                        tabIndex={0}
+                      >
+                        <div className="sms-row-amount">
+                          {tx.currency} {tx.amount.toFixed(2)} · {tx.date}
+                        </div>
+                        <div className="sms-picker-meta">
+                          {tx.category?.name ?? '—'}
+                          {tx.merchant ? ` · ${tx.merchant}` : ''}
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+              <div className="sms-modal-footer">
+                <button type="button" className="btn btn-secondary" onClick={() => setPickerForSheetIndex(null)}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        <p className="sms-page-links">
+          <Link to="/transactions">← Transactions</Link> · <Link to="/add">Add transaction</Link>
+        </p>
+      </>
+    );
+  }
 
   return (
     <>

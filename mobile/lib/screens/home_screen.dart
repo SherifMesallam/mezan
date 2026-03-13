@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../api.dart';
@@ -74,6 +75,47 @@ String _formatShortDate(String iso) {
   return '${d.day} ${_monthNames[d.month - 1].substring(0, 3)} ${d.year}';
 }
 
+(String, String) _getTodayRange() {
+  final d = DateTime.now();
+  final s = '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+  return (s, s);
+}
+
+(String, String) _getYesterdayRange() {
+  final d = DateTime.now().subtract(const Duration(days: 1));
+  final s = '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+  return (s, s);
+}
+
+(String, String) _getThisWeekRange() {
+  final now = DateTime.now();
+  final day = now.weekday; // 1=Mon, 7=Sun
+  final mon = now.subtract(Duration(days: day - 1));
+  final sun = mon.add(const Duration(days: 6));
+  final m = '${mon.year}-${mon.month.toString().padLeft(2, '0')}-${mon.day.toString().padLeft(2, '0')}';
+  final s = '${sun.year}-${sun.month.toString().padLeft(2, '0')}-${sun.day.toString().padLeft(2, '0')}';
+  return (m, s);
+}
+
+(String, String) _getPreviousWeekRange() {
+  final (m, _) = _getThisWeekRange();
+  final mon = DateTime.parse(m);
+  final lastMon = mon.subtract(const Duration(days: 7));
+  final lastSun = lastMon.add(const Duration(days: 6));
+  final fm = '${lastMon.year}-${lastMon.month.toString().padLeft(2, '0')}-${lastMon.day.toString().padLeft(2, '0')}';
+  final fs = '${lastSun.year}-${lastSun.month.toString().padLeft(2, '0')}-${lastSun.day.toString().padLeft(2, '0')}';
+  return (fm, fs);
+}
+
+(String, String) _getPreviousMonthRange() {
+  final now = DateTime.now();
+  final last = DateTime(now.year, now.month - 1, 1);
+  final lastDay = DateTime(last.year, last.month, 0).day;
+  final start = '${last.year}-${last.month.toString().padLeft(2, '0')}-01';
+  final end = '${last.year}-${last.month.toString().padLeft(2, '0')}-${lastDay.toString().padLeft(2, '0')}';
+  return (start, end);
+}
+
 class _HomeScreenState extends State<HomeScreen> {
   List<Map<String, dynamic>> _transactions = [];
   Map<String, dynamic>? _budgetStatus;
@@ -92,7 +134,11 @@ class _HomeScreenState extends State<HomeScreen> {
   String _month = '';
   String _dateFrom = '';
   String _dateTo = '';
+  String _searchQuery = '';
+  String? _quickFilter; // today, yesterday, this_week, previous_week, previous_month
   bool _timeFilterExpanded = false;
+  late final TextEditingController _searchController;
+  Timer? _searchDebounce;
   bool _fabExpanded = false;
   bool _anomaliesExpanded = false;
   bool _spendingSummaryExpanded = true;
@@ -105,11 +151,19 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
+    _searchController = TextEditingController();
     final now = DateTime.now();
     _month = '${now.year}-${now.month.toString().padLeft(2, '0')}';
     _dateFrom = _monthRangeStart(_month);
     _dateTo = _monthRangeEnd(_month);
     _load();
+  }
+
+  @override
+  void dispose() {
+    _searchDebounce?.cancel();
+    _searchController.dispose();
+    super.dispose();
   }
 
   (String from, String to, String month) get _range {
@@ -123,36 +177,52 @@ class _HomeScreenState extends State<HomeScreen> {
     final token = state.token;
     if (token == null) return;
     final (from, to, month) = _range;
+    final q = _searchQuery.trim();
     setState(() {
       _loading = true;
       _error = null;
     });
     try {
       final api = Api(baseUrl: state.effectiveBaseUrl, token: token);
-      final res = await api.get('/v1/transactions', {'from': from, 'to': to, 'limit': '20'});
+      final txParams = <String, String>{'from': from, 'to': to, 'limit': '20'};
+      if (q.isNotEmpty) txParams['q'] = q;
+      final res = await api.get('/v1/transactions', txParams);
       final budgetRes = await api.get('/v1/insights/budget-status', {'month': month});
-      final byCatRes = await api.get('/v1/insights/budget-by-category', _useAllTime ? {'month': month, 'from': from, 'to': to} : {'month': month});
+      final byCatParams = <String, String>{'month': month};
+      if (_useAllTime || _useDateRange) {
+        byCatParams['from'] = from;
+        byCatParams['to'] = to;
+      }
+      final byCatRes = await api.get('/v1/insights/budget-by-category', byCatParams);
       Map<String, dynamic>? insightsRes;
       try {
-        insightsRes = await api.get('/v1/insights/spending-patterns', {'from': from, 'to': to});
+        final insightParams = <String, String>{'from': from, 'to': to};
+        if (q.isNotEmpty) insightParams['q'] = q;
+        insightsRes = await api.get('/v1/insights/spending-patterns', insightParams);
       } catch (_) {
         insightsRes = null;
       }
       Map<String, dynamic>? predictionRes;
       try {
-        predictionRes = await api.get('/v1/insights/predict-end-of-month', {'month': month});
+        final predParams = <String, String>{'month': month};
+        if (q.isNotEmpty) predParams['q'] = q;
+        predictionRes = await api.get('/v1/insights/predict-end-of-month', predParams);
       } catch (_) {
         predictionRes = null;
       }
       Map<String, dynamic>? explanationRes;
       try {
-        explanationRes = await api.get('/v1/insights/spending-explanation', {'from': from, 'to': to});
+        final expParams = <String, String>{'from': from, 'to': to};
+        if (q.isNotEmpty) expParams['q'] = q;
+        explanationRes = await api.get('/v1/insights/spending-explanation', expParams);
       } catch (_) {
         explanationRes = null;
       }
       List<dynamic>? anomaliesList;
       try {
-        final anRes = await api.get('/v1/insights/anomalies', {'from': from, 'to': to});
+        final anParams = <String, String>{'from': from, 'to': to};
+        if (q.isNotEmpty) anParams['q'] = q;
+        final anRes = await api.get('/v1/insights/anomalies', anParams);
         anomaliesList = anRes['anomalies'] as List<dynamic>?;
       } catch (_) {
         anomaliesList = null;
@@ -303,12 +373,14 @@ class _HomeScreenState extends State<HomeScreen> {
                         }
                       },
                       onSelectThisMonth: () => setState(() {
+                        _quickFilter = null;
                         _useAllTime = false;
                         _useDateRange = false;
                         _timeFilterExpanded = false;
                         _load();
                       }),
                       onSelectCustom: () => setState(() {
+                        _quickFilter = null;
                         _useAllTime = false;
                         _useDateRange = true;
                         if (_dateFrom.isEmpty) _dateFrom = _monthRangeStart(_month);
@@ -345,11 +417,77 @@ class _HomeScreenState extends State<HomeScreen> {
                         }
                       },
                       onSelectAllTime: () => setState(() {
+                        _quickFilter = null;
                         _useAllTime = true;
                         _useDateRange = false;
                         _timeFilterExpanded = false;
                         _load();
                       }),
+                    ),
+                    const SizedBox(height: 12),
+                    // Global search
+                    TextField(
+                      controller: _searchController,
+                      decoration: InputDecoration(
+                        hintText: 'Search merchant, category, tag…',
+                        prefixIcon: const Icon(Icons.search),
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                        isDense: true,
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                      ),
+                      onChanged: (v) {
+                        setState(() => _searchQuery = v);
+                        _searchDebounce?.cancel();
+                        _searchDebounce = Timer(const Duration(milliseconds: 400), _load);
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    // Quick time filters
+                    Builder(
+                      builder: (ctx) {
+                        final theme = Theme.of(ctx);
+                        return Wrap(
+                          spacing: 6,
+                          runSpacing: 6,
+                          children: [
+                            Text('Quick:', style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+                        ...['today', 'yesterday', 'this_week', 'previous_week', 'previous_month'].map((preset) {
+                          const labels = {'today': 'Today', 'yesterday': 'Yesterday', 'this_week': 'This week', 'previous_week': 'Prev week', 'previous_month': 'Prev month'};
+                          final selected = _quickFilter == preset;
+                          return FilterChip(
+                            label: Text(labels[preset]!),
+                            selected: selected,
+                            onSelected: (_) {
+                              setState(() {
+                                if (selected) {
+                                  _quickFilter = null;
+                                  _useDateRange = false;
+                                  _useAllTime = false;
+                                  _dateFrom = _monthRangeStart(_month);
+                                  _dateTo = _monthRangeEnd(_month);
+                                } else {
+                                  _quickFilter = preset;
+                                  _useAllTime = false;
+                                  _useDateRange = true;
+                                  final (f, t) = switch (preset) {
+                                    'today' => _getTodayRange(),
+                                    'yesterday' => _getYesterdayRange(),
+                                    'this_week' => _getThisWeekRange(),
+                                    'previous_week' => _getPreviousWeekRange(),
+                                    'previous_month' => _getPreviousMonthRange(),
+                                    _ => _getTodayRange(),
+                                  };
+                                  _dateFrom = f;
+                                  _dateTo = t;
+                                }
+                                _load();
+                              });
+                            },
+                          );
+                        }),
+                          ],
+                        );
+                      },
                     ),
                     const SizedBox(height: 16),
                     // Spent & Remaining – main focus, bigger and bolder
