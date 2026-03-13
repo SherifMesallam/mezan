@@ -445,6 +445,224 @@ insightsRouter.get('/predict-end-of-month', async (req: AuthRequest, res) => {
   }
 });
 
+/**
+ * Call OpenAI chat/completions. Returns content string or null if no key / request fails.
+ */
+async function openAiChat(systemPrompt: string, userPrompt: string, maxTokens = 300): Promise<string | null> {
+  const apiKey = process.env.OPENAI_API_KEY?.trim();
+  if (!apiKey) return null;
+  const baseURL = (process.env.OPENAI_BASE_URL?.trim() || 'https://api.openai.com/v1').replace(/\/$/, '');
+  const model = process.env.OPENAI_MODEL?.trim() || 'gpt-4o-mini';
+  try {
+    const res = await fetch(`${baseURL}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt },
+        ],
+        max_tokens: maxTokens,
+        temperature: 0.4,
+      }),
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
+    const content = data.choices?.[0]?.message?.content?.trim();
+    return content ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * GET /v1/insights/spending-explanation
+ * Query: from, to (YYYY-MM-DD). Returns a short natural-language summary of spending (e.g. "You spent more on food because of 3 Talabat orders").
+ */
+insightsRouter.get('/spending-explanation', async (req: AuthRequest, res) => {
+  try {
+    const userId = req.user!.userId;
+    const from = (req.query.from as string)?.trim();
+    const to = (req.query.to as string)?.trim();
+    if (!from || !to || !/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
+      res.status(422).json({ error: 'from and to (YYYY-MM-DD) are required' });
+      return;
+    }
+
+    const transactions = await prisma.transaction.findMany({
+      where: { userId, date: { gte: from, lte: to } },
+      include: { category: { select: { id: true, name: true } } },
+    });
+
+    const total = transactions.reduce((s, t) => s + effectiveAmount(t), 0);
+    const byCategory = new Map<string, { name: string; total: number; count: number; merchants: Map<string, { amount: number; count: number }> }>();
+    for (const t of transactions) {
+      const amt = effectiveAmount(t);
+      const catId = t.categoryId;
+      const catName = t.category.name;
+      let cur = byCategory.get(catId);
+      if (!cur) {
+        cur = { name: catName, total: 0, count: 0, merchants: new Map() };
+        byCategory.set(catId, cur);
+      }
+      cur.total += amt;
+      cur.count += 1;
+      const merchant = (t.merchant || '').trim() || 'Unknown';
+      const m = cur.merchants.get(merchant);
+      if (!m) cur.merchants.set(merchant, { amount: amt, count: 1 });
+      else { m.amount += amt; m.count += 1; }
+    }
+
+    const categoryLines: string[] = [];
+    for (const [, data] of byCategory) {
+      const topMerchants = [...data.merchants.entries()]
+        .sort((a, b) => b[1].amount - a[1].amount)
+        .slice(0, 5)
+        .map(([name, v]) => `${name}: EGP ${Math.round(v.amount)} (${v.count} tx)`);
+      categoryLines.push(`- ${data.name}: ${Math.round(data.total)} EGP, ${data.count} transactions. Top: ${topMerchants.join('; ')}`);
+    }
+    const categorySummary = categoryLines.join('\n');
+    const periodLabel = from === to ? from : `${from} to ${to}`;
+
+    const userPrompt = `Spending from ${periodLabel}. Total: EGP ${Math.round(total)}. By category:\n${categorySummary}\n\nWrite 2-4 short sentences in second person ("You spent...") explaining where the money went. Mention specific merchants or counts when relevant (e.g. "3 Talabat orders"). Be neutral and concise. No bullet points.`;
+
+    const explanation = await openAiChat(
+      'You are a personal finance assistant. Summarize spending in plain, friendly language.',
+      userPrompt,
+      250
+    );
+
+    res.json({
+      from,
+      to,
+      explanation: explanation || `Total spend EGP ${Math.round(total)} over this period. Add OPENAI_API_KEY for a natural-language summary.`,
+    });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Failed to get spending explanation' });
+  }
+});
+
+/**
+ * GET /v1/insights/anomalies
+ * Query: from, to (YYYY-MM-DD). Returns list of anomalies: unusual category spend or unusually large single transactions.
+ */
+insightsRouter.get('/anomalies', async (req: AuthRequest, res) => {
+  try {
+    const userId = req.user!.userId;
+    const from = (req.query.from as string)?.trim();
+    const to = (req.query.to as string)?.trim();
+    if (!from || !to || !/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
+      res.status(422).json({ error: 'from and to (YYYY-MM-DD) are required' });
+      return;
+    }
+
+    const fromDate = new Date(from + 'T12:00:00Z');
+    const toDate = new Date(to + 'T12:00:00Z');
+    const days = Math.max(1, Math.round((toDate.getTime() - fromDate.getTime()) / 86400000) + 1);
+
+    const [currentTx, baselineTx] = await Promise.all([
+      prisma.transaction.findMany({
+        where: { userId, date: { gte: from, lte: to } },
+        include: { category: { select: { id: true, name: true } } },
+      }),
+      (async () => {
+        const baseEnd = new Date(fromDate);
+        baseEnd.setUTCDate(baseEnd.getUTCDate() - 1);
+        const baseStart = new Date(baseEnd);
+        baseStart.setUTCDate(baseStart.getUTCDate() - days);
+        const baseFrom = baseStart.toISOString().slice(0, 10);
+        const baseTo = baseEnd.toISOString().slice(0, 10);
+        return prisma.transaction.findMany({
+          where: { userId, date: { gte: baseFrom, lte: baseTo } },
+          include: { category: { select: { id: true, name: true } } },
+        });
+      })(),
+    ]);
+
+    const anomalies: { type: string; message: string; category_name?: string; amount?: number; merchant?: string; date?: string; transaction_id?: string }[] = [];
+
+    const currentByCat = new Map<string, number>();
+    const baselineByCat = new Map<string, number>();
+    let currentTotal = 0;
+    let baselineTotal = 0;
+    const allAmounts: number[] = [];
+
+    for (const t of currentTx) {
+      const amt = effectiveAmount(t);
+      currentTotal += amt;
+      allAmounts.push(amt);
+      currentByCat.set(t.categoryId, (currentByCat.get(t.categoryId) ?? 0) + amt);
+    }
+    for (const t of baselineTx) {
+      const amt = effectiveAmount(t);
+      baselineTotal += amt;
+      baselineByCat.set(t.categoryId, (baselineByCat.get(t.categoryId) ?? 0) + amt);
+    }
+
+    const avgTxSize = allAmounts.length > 0 ? allAmounts.reduce((a, b) => a + b, 0) / allAmounts.length : 0;
+    const baselineAvgByCat = new Map<string, number>();
+    for (const [catId, sum] of baselineByCat) {
+      const count = baselineTx.filter((t) => t.categoryId === catId).length;
+      baselineAvgByCat.set(catId, count > 0 ? sum / count : 0);
+    }
+
+    for (const t of currentTx) {
+      const amt = effectiveAmount(t);
+      if (avgTxSize > 0 && amt >= avgTxSize * 3) {
+        const catName = t.category.name;
+        anomalies.push({
+          type: 'large_transaction',
+          message: `Larger than usual transaction: EGP ${Math.round(amt)} at ${(t.merchant || '').trim() || 'Unknown'} (${catName})`,
+          category_name: catName,
+          amount: Math.round(amt * 100) / 100,
+          merchant: t.merchant ?? undefined,
+          date: t.date,
+          transaction_id: t.id,
+        });
+      }
+    }
+
+    for (const [catId, currentSum] of currentByCat) {
+      const baselineSum = baselineByCat.get(catId) ?? 0;
+      if (baselineSum > 0 && currentSum >= baselineSum * 2) {
+        const catName = currentTx.find((t) => t.categoryId === catId)?.category.name ?? 'Unknown';
+        anomalies.push({
+          type: 'category_spend',
+          message: `Unusual spend in ${catName} this period: EGP ${Math.round(currentSum)} (about ${(currentSum / baselineSum).toFixed(1)}x usual)`,
+          category_name: catName,
+          amount: Math.round(currentSum * 100) / 100,
+        });
+      }
+    }
+
+    const apiKey = process.env.OPENAI_API_KEY?.trim();
+    if (apiKey && anomalies.length > 0) {
+      const list = anomalies.map((a) => a.message).join('\n');
+      const rewritten = await openAiChat(
+        'You are a personal finance assistant. Rewrite anomaly alerts in a short, friendly way. One line per anomaly. Keep amounts and key facts.',
+        `Rewrite these alerts concisely, one per line:\n${list}`,
+        200
+      );
+      if (rewritten) {
+        const lines = rewritten.split('\n').filter((s) => s.trim());
+        anomalies.forEach((a, i) => {
+          if (lines[i]) a.message = lines[i].replace(/^[-*]\s*/, '').trim();
+        });
+      }
+    }
+
+    res.json({ from, to, anomalies });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Failed to get anomalies' });
+  }
+});
+
 /** Diagnostic: list each category with its transaction count and total amount. Use to spot duplicate names or mismatched ids (e.g. Subscriptions showing 0). */
 insightsRouter.get('/category-counts', async (req: AuthRequest, res) => {
   try {

@@ -80,6 +80,8 @@ class _HomeScreenState extends State<HomeScreen> {
   Map<String, dynamic>? _budgetByCategory;
   Map<String, dynamic>? _insights;
   Map<String, dynamic>? _prediction;
+  Map<String, dynamic>? _spendingExplanation;
+  List<dynamic>? _anomalies;
   List<Map<String, dynamic>> _categories = [];
   List<Map<String, dynamic>> _tags = [];
   bool _loading = true;
@@ -135,6 +137,19 @@ class _HomeScreenState extends State<HomeScreen> {
       } catch (_) {
         predictionRes = null;
       }
+      Map<String, dynamic>? explanationRes;
+      try {
+        explanationRes = await api.get('/v1/insights/spending-explanation', {'from': from, 'to': to});
+      } catch (_) {
+        explanationRes = null;
+      }
+      List<dynamic>? anomaliesList;
+      try {
+        final anRes = await api.get('/v1/insights/anomalies', {'from': from, 'to': to});
+        anomaliesList = anRes['anomalies'] as List<dynamic>?;
+      } catch (_) {
+        anomaliesList = null;
+      }
       final catRes = await api.get('/v1/categories');
       final tagRes = await api.get('/v1/tags');
       if (mounted) {
@@ -144,6 +159,8 @@ class _HomeScreenState extends State<HomeScreen> {
           _budgetByCategory = byCatRes;
           _insights = insightsRes;
           _prediction = predictionRes;
+          _spendingExplanation = explanationRes;
+          _anomalies = anomaliesList;
           _categories = List<Map<String, dynamic>>.from(catRes['categories'] ?? []);
           _tags = List<Map<String, dynamic>>.from(tagRes['tags'] ?? []);
           _loading = false;
@@ -397,6 +414,18 @@ class _HomeScreenState extends State<HomeScreen> {
                       Text('Insights', style: Theme.of(context).textTheme.titleMedium),
                       const SizedBox(height: 8),
                       _InsightsSection(insights: _insights),
+                      if (_spendingExplanation != null && (_spendingExplanation!['explanation'] as String?)?.isNotEmpty == true) ...[
+                        const SizedBox(height: 20),
+                        Text('Spending summary', style: Theme.of(context).textTheme.titleMedium),
+                        const SizedBox(height: 8),
+                        _SpendingSummarySection(explanation: _spendingExplanation!),
+                      ],
+                      if (_anomalies != null && _anomalies!.isNotEmpty) ...[
+                        const SizedBox(height: 20),
+                        Text('Anomaly alerts', style: Theme.of(context).textTheme.titleMedium),
+                        const SizedBox(height: 8),
+                        _AnomaliesSection(anomalies: _anomalies!),
+                      ],
                       if (_prediction != null) ...[
                         const SizedBox(height: 20),
                         Text('Prediction', style: Theme.of(context).textTheme.titleMedium),
@@ -818,6 +847,94 @@ class _InsightRow extends StatelessWidget {
           textAlign: TextAlign.start,
         ),
       ],
+    );
+  }
+}
+
+/// Spending summary: one card with natural-language explanation from API.
+class _SpendingSummarySection extends StatelessWidget {
+  const _SpendingSummarySection({required this.explanation});
+
+  final Map<String, dynamic> explanation;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final text = explanation['explanation'] as String? ?? '';
+    if (text.isEmpty) return const SizedBox.shrink();
+    return Card(
+      color: theme.colorScheme.surface,
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              text,
+              style: theme.textTheme.bodyMedium?.copyWith(
+                height: 1.4,
+                color: theme.colorScheme.onSurface,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Anomaly alerts: one card per anomaly inside a section container.
+class _AnomaliesSection extends StatelessWidget {
+  const _AnomaliesSection({required this.anomalies});
+
+  final List<dynamic> anomalies;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final cards = <Widget>[];
+    for (int i = 0; i < anomalies.length; i++) {
+      final a = anomalies[i];
+      if (a is! Map<String, dynamic>) continue;
+      final message = a['message'] as String? ?? 'Unusual activity';
+      cards.add(
+        Card(
+          color: theme.colorScheme.errorContainer.withOpacity(0.35),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(Icons.warning_amber_rounded, size: 20, color: theme.colorScheme.error),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    message,
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: theme.colorScheme.onSurface,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+    return Card(
+      color: theme.colorScheme.surface,
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            for (int i = 0; i < cards.length; i++) ...[
+              if (i > 0) const SizedBox(height: 8),
+              cards[i],
+            ],
+          ],
+        ),
+      ),
     );
   }
 }

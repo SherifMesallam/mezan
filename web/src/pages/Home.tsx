@@ -69,6 +69,18 @@ type Prediction = {
   worst_case_text: string;
 };
 
+type SpendingExplanation = { from: string; to: string; explanation: string };
+
+type Anomaly = {
+  type: string;
+  message: string;
+  category_name?: string;
+  amount?: number;
+  merchant?: string;
+  date?: string;
+  transaction_id?: string;
+};
+
 const PIE_COLORS = [
   '#0d9b9e', '#0b8588', '#2196F3', '#E91E63', '#795548', '#9E9E9E', '#FF9800', '#4CAF50',
   '#607D8B', '#00BCD4', '#FF5722', '#3F51B5', '#009688', '#8BC34A', '#03A9F4', '#CDDC39',
@@ -302,6 +314,8 @@ export default function Home() {
   } | null>(null);
   const [insights, setInsights] = useState<SpendingPatterns | null>(null);
   const [prediction, setPrediction] = useState<Prediction | null>(null);
+  const [spendingExplanation, setSpendingExplanation] = useState<SpendingExplanation | null>(null);
+  const [anomalies, setAnomalies] = useState<Anomaly[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
@@ -326,6 +340,14 @@ export default function Home() {
       token,
       query: { month },
     }).catch(() => null);
+    const explanationPromise = api<SpendingExplanation>('/v1/insights/spending-explanation', {
+      token,
+      query: { from, to },
+    }).catch(() => null);
+    const anomaliesPromise = api<{ anomalies: Anomaly[] }>('/v1/insights/anomalies', {
+      token,
+      query: { from, to },
+    }).catch(() => ({ anomalies: [] }));
 
     Promise.all([
       api<{ transactions: Transaction[]; total_count?: number }>('/v1/transactions', {
@@ -352,8 +374,10 @@ export default function Home() {
       }),
       insightsPromise,
       predictionPromise,
+      explanationPromise,
+      anomaliesPromise,
     ])
-      .then(([txRes, catRes, budgetRes, summaryRes, byCatRes, insightsRes, predictionRes]) => {
+      .then(([txRes, catRes, budgetRes, summaryRes, byCatRes, insightsRes, predictionRes, explanationRes, anomaliesRes]) => {
         setTransactions(txRes.transactions || []);
         setCategories(catRes.categories || []);
         setBudgetStatus(budgetRes.budget_status || []);
@@ -361,6 +385,8 @@ export default function Home() {
         setBudgetByCategory(byCatRes);
         setInsights(insightsRes ?? null);
         setPrediction(predictionRes ?? null);
+        setSpendingExplanation(explanationRes ?? null);
+        setAnomalies(anomaliesRes?.anomalies ?? []);
       })
       .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load'))
       .finally(() => setLoading(false));
@@ -797,6 +823,43 @@ export default function Home() {
           </div>
         </div>
       ))}
+
+      {/* Spending summary – natural-language explanation */}
+      {spendingExplanation?.explanation && (
+        <div className="card" style={{ marginTop: '1.5rem', padding: '1rem' }}>
+          <h2 className="home-card-title" style={{ margin: 0 }}>Spending summary</h2>
+          <p style={{ margin: '0.75rem 0 0 0', fontSize: '0.95rem', lineHeight: 1.5, color: 'var(--mezan-text)' }}>
+            {spendingExplanation.explanation}
+          </p>
+        </div>
+      )}
+
+      {/* Anomaly alerts */}
+      {anomalies.length > 0 && (
+        <div className="card" style={{ marginTop: '1.5rem', padding: '1rem' }}>
+          <h2 className="home-card-title" style={{ margin: 0 }}>Anomaly alerts</h2>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginTop: '0.75rem' }}>
+            {anomalies.map((a, i) => (
+              <div
+                key={i}
+                className="card"
+                style={{
+                  padding: '0.75rem 1rem',
+                  margin: 0,
+                  background: 'rgba(211, 47, 47, 0.08)',
+                  borderLeft: '3px solid var(--mezan-error, #d32f2f)',
+                  display: 'flex',
+                  alignItems: 'flex-start',
+                  gap: '0.5rem',
+                }}
+              >
+                <span style={{ color: 'var(--mezan-error, #d32f2f)', fontSize: '1.1rem' }}>⚠</span>
+                <span style={{ fontSize: '0.9rem', lineHeight: 1.4 }}>{a.message}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Prediction – section container; intro text then 3 colored cards */}
       {prediction && (
