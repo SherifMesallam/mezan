@@ -20,17 +20,29 @@ budgetsRouter.get('/', async (req: AuthRequest, res) => {
 
     const spentByScope = await computeSpentByScope(userId, month);
 
+    const categoryIds = [...new Set(budgets.filter((b) => b.scopeId && (b.scopeType === 'category' || b.scopeType === 'sub_category')).map((b) => b.scopeId!))];
+    const tagIds = [...new Set(budgets.filter((b) => b.scopeId && b.scopeType === 'tag').map((b) => b.scopeId!))];
+    const categories = categoryIds.length > 0 ? await prisma.category.findMany({ where: { id: { in: categoryIds }, userId }, select: { id: true, name: true } }) : [];
+    const tags = tagIds.length > 0 ? await prisma.tag.findMany({ where: { id: { in: tagIds }, userId }, select: { id: true, name: true } }) : [];
+    const categoryNames = new Map(categories.map((c) => [c.id, c.name]));
+    const tagNames = new Map(tags.map((t) => [t.id, t.name]));
+
     const list = budgets.map((b) => {
       const key = b.scopeType === 'total_monthly' ? 'total_monthly' : `${b.scopeType}:${b.scopeId}`;
       const spent = spentByScope.get(key) || 0;
       const amount = Number(b.amount);
       const remaining = Math.max(0, amount - spent);
       const overspent = spent > amount;
+      let scope_name: string | null = null;
+      if (b.scopeType === 'total_monthly') scope_name = 'Total monthly';
+      else if (b.scopeId && (b.scopeType === 'category' || b.scopeType === 'sub_category')) scope_name = categoryNames.get(b.scopeId) ?? null;
+      else if (b.scopeId && b.scopeType === 'tag') scope_name = tagNames.get(b.scopeId) ?? null;
 
       return {
         id: b.id,
         scope_type: b.scopeType,
         scope_id: b.scopeId,
+        scope_name,
         amount,
         currency: b.currency,
         month: b.month,

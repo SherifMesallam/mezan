@@ -14,7 +14,7 @@ class MergePreviewItem {
         time = json['time'] as String?,
         categoryName = json['category_name'] as String? ?? 'Other',
         merchant = json['merchant'] as String?,
-        sourceSnippet = json['source_snippet'] as String?,
+        sourceSnippet = (json['source_snippet'] ?? json['raw_line']) as String?,
         matchedEntryId = json['matched_entry_id'] as String?,
         matchedEntry = json['matched_entry'] != null
             ? MatchedEntry.fromJson(Map<String, dynamic>.from(json['matched_entry'] as Map))
@@ -57,6 +57,7 @@ class MergeWizardScreen extends StatefulWidget {
     required this.onResult,
     this.resetButtonLabel = 'Paste again',
     this.sourceColumnLabel = 'From SMS',
+    this.confirmPath = 'sms-merge-confirm',
   });
 
   final List<MergePreviewItem> items;
@@ -64,6 +65,8 @@ class MergeWizardScreen extends StatefulWidget {
   final void Function(MergeWizardResult) onResult;
   final String resetButtonLabel;
   final String sourceColumnLabel;
+  /// Confirm API path, e.g. 'sms-merge-confirm' or 'sheet-merge-confirm'.
+  final String confirmPath;
 
   @override
   State<MergeWizardScreen> createState() => _MergeWizardScreenState();
@@ -322,7 +325,7 @@ class _MergeWizardScreenState extends State<MergeWizardScreen> {
         };
       }).toList();
 
-      final res = await _api.post('/v1/import/sms-merge-confirm', {'items': payload});
+      final res = await _api.post('/v1/import/${widget.confirmPath}', {'items': payload});
       final created = (res['count'] as num?)?.toInt() ?? 0;
       final skipped = (res['skipped'] as num?)?.toInt() ?? 0;
       final discarded = (res['discarded'] as num?)?.toInt() ?? 0;
@@ -420,10 +423,11 @@ class _MergeWizardScreenState extends State<MergeWizardScreen> {
                   tags: _tags,
                   action: _getAction(it),
                   displayMatch: _getDisplayMatch(it),
-                  amountText: _amountByIndex[it.sheetIndex],
-                  currencyText: _currencyByIndex[it.sheetIndex],
-                  dateText: _dateByIndex[it.sheetIndex],
-                  timeText: _timeByIndex[it.sheetIndex],
+                  amountText: _amountByIndex[it.sheetIndex] ??
+                      (it.amount > 0 ? it.amount.toStringAsFixed(2) : ''),
+                  currencyText: _currencyByIndex[it.sheetIndex] ?? it.currency,
+                  dateText: _dateByIndex[it.sheetIndex] ?? it.date,
+                  timeText: _timeByIndex[it.sheetIndex] ?? it.time ?? '',
                   merchantText: _merchantByIndex[it.sheetIndex] ?? it.merchant,
                   categoryId: _categoryIdByIndex[it.sheetIndex] ??
                       _categories
@@ -450,8 +454,13 @@ class _MergeWizardScreenState extends State<MergeWizardScreen> {
                       setState(() => _timeByIndex[it.sheetIndex] = v),
                   onMerchantChanged: (v) =>
                       setState(() => _merchantByIndex[it.sheetIndex] = v),
-                  onCategoryChanged: (v) =>
-                      setState(() => _categoryIdByIndex[it.sheetIndex] = v),
+                  onCategoryChanged: (v) => setState(() {
+                      if (v != null) {
+                        _categoryIdByIndex[it.sheetIndex] = v;
+                      } else {
+                        _categoryIdByIndex.remove(it.sheetIndex);
+                      }
+                    }),
                   onTagToggled: (tagId) {
                     setState(() {
                       final cur = _tagIdsByIndex[it.sheetIndex] ?? [];
@@ -632,10 +641,12 @@ class _MergeRowCardState extends State<_MergeRowCard> {
             Row(
               children: [
                 Expanded(
+                  flex: 2,
                   child: TextField(
                     controller: _currencyController,
                     decoration: const InputDecoration(
                       labelText: 'Currency',
+                      hintText: 'e.g. EGP, USD',
                       isDense: true,
                       border: OutlineInputBorder(),
                     ),
@@ -657,6 +668,7 @@ class _MergeRowCardState extends State<_MergeRowCard> {
                 ),
                 const SizedBox(width: 8),
                 Expanded(
+                  flex: 2,
                   child: TextField(
                     controller: _timeController,
                     decoration: const InputDecoration(

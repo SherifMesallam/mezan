@@ -21,6 +21,8 @@ dependencies:
   telephony: ^0.2.0
   image_picker: ^1.0.7
   file_picker: ^8.0.0+1
+  path_provider: ^2.1.1
+  share_plus: ^7.2.1
 
 dev_dependencies:
   flutter_test:

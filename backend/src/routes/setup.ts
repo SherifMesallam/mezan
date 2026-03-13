@@ -1,7 +1,9 @@
 import { Router } from 'express';
+import { Decimal } from '@prisma/client/runtime/library';
 import { prisma } from '../lib/prisma';
 import { normalizeDateToYYYYMMDD } from '../lib/date';
 import { authMiddleware, AuthRequest } from '../middleware/auth';
+import { amountToEgp } from '../services/exchange-rates';
 import { extractTransactionsFromSMS } from '../services/sms-extract';
 import { getLearningTransactionsForUser } from './ingest';
 
@@ -163,11 +165,19 @@ setupRouter.post('/confirm-extracted', async (req: AuthRequest, res) => {
         tagIds = tagIds.filter((id: string) => validIds.has(id));
       }
 
+      const currency = (row.currency || 'EGP').toString().toUpperCase().slice(0, 3) || 'EGP';
+      let egpVal: Decimal | null = null;
+      if (currency !== 'EGP' && Number.isFinite(amount)) {
+        const converted = await amountToEgp(currency, amount);
+        if (converted != null) egpVal = new Decimal(converted);
+      }
+
       const transaction = await prisma.transaction.create({
         data: {
           userId,
           amount,
-          currency: (row.currency || 'EGP').toString().toUpperCase().slice(0, 3) || 'EGP',
+          currency,
+          egpValue: egpVal ?? undefined,
           categoryId: category_id,
           date,
           time: row.time != null ? String(row.time) : null,

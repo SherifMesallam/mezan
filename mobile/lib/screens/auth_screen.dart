@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:provider/provider.dart';
@@ -51,6 +53,11 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
       }
     } on ApiException catch (e) {
       if (mounted) setState(() => _error = e.message);
+    } on TimeoutException catch (_) {
+      if (mounted) {
+        setState(() => _error =
+            'Server is taking too long. If it\'s waking up (e.g. Render), try again in a moment.');
+      }
     } on http.ClientException catch (_) {
       if (mounted) {
         setState(() => _error = 'Cannot reach server. Check your connection.');

@@ -3,6 +3,7 @@ import { prisma } from '../lib/prisma';
 import { normalizeDateToYYYYMMDD } from '../lib/date';
 import { authMiddleware, AuthRequest } from '../middleware/auth';
 import { recordCategoryFeedback } from '../services/learning';
+import { amountToEgp } from '../services/exchange-rates';
 import { Decimal } from '@prisma/client/runtime/library';
 
 const VALID_DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
@@ -176,19 +177,26 @@ transactionsRouter.post('/', async (req: AuthRequest, res) => {
       return;
     }
 
-    const cur = (currency || 'EGP').toUpperCase();
+    const cur = (currency || 'EGP').toUpperCase().slice(0, 3);
     const dateStr = normalizeDateToYYYYMMDD(date) || String(date).trim().slice(0, 10);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
       res.status(422).json({ error: 'Invalid date; use YYYY-MM-DD or a parseable date' });
       return;
     }
 
+    const amountNum = Number(amount);
+    let egpVal: Decimal | null = egp_value != null && String(egp_value).trim() !== '' ? new Decimal(Number(egp_value)) : null;
+    if (egpVal == null && cur !== 'EGP' && Number.isFinite(amountNum)) {
+      const converted = await amountToEgp(cur, amountNum);
+      if (converted != null) egpVal = new Decimal(converted);
+    }
+
     const transaction = await prisma.transaction.create({
       data: {
         userId,
-        amount: Number(amount),
+        amount: amountNum,
         currency: cur,
-        egpValue: egp_value != null && String(egp_value).trim() !== '' ? new Decimal(Number(egp_value)) : null,
+        egpValue: egpVal,
         categoryId: category_id,
         date: dateStr,
         time: time != null ? String(time) : null,
@@ -260,8 +268,14 @@ transactionsRouter.patch('/:id', async (req: AuthRequest, res) => {
     }
     if (time !== undefined) data.time = time ? String(time) : null;
     if (amount != null) data.amount = Number(amount);
-    if (currency != null) data.currency = String(currency).toUpperCase();
+    if (currency != null) data.currency = String(currency).toUpperCase().slice(0, 3);
     if (egp_value !== undefined) data.egpValue = egp_value != null && String(egp_value).trim() !== '' ? new Decimal(Number(egp_value)) : null;
+    const effectiveCurrency = (data.currency as string) ?? existing.currency;
+    const effectiveAmount = (data.amount as number) ?? Number(existing.amount);
+    if (egp_value === undefined && effectiveCurrency !== 'EGP' && Number.isFinite(effectiveAmount)) {
+      const converted = await amountToEgp(effectiveCurrency, effectiveAmount);
+      if (converted != null) data.egpValue = new Decimal(converted);
+    }
     if (merchant !== undefined) data.merchant = merchant ? String(merchant) : null;
     if (location_tile !== undefined) data.locationTile = location_tile ? String(location_tile) : null;
 

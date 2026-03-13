@@ -219,7 +219,15 @@ export async function extractTransactionsFromSMS(
       if (Number.isNaN(amount)) continue;
       const dateStr = normalizeDateToYYYYMMDD(o.date) || normalizeDate(o.date);
       const timeStr = normalizeTime(o.time);
-      const currency = normalizeCurrency(o.currency);
+      let currency = normalizeCurrency(o.currency);
+      if (currency === 'EGP') {
+        const inferred = inferCurrencyFromSnippet(o.source_snippet as string | null | undefined);
+        if (inferred) {
+          console.log('[SMS-EXTRACT] Currency inferred from snippet:', { llm_currency: o.currency, inferred, snippet: (o.source_snippet as string)?.slice(0, 80) });
+          currency = inferred;
+        }
+      }
+      console.log('[SMS-EXTRACT] Row result:', { amount, currency, date: dateStr, merchant: (o.merchant as string)?.slice(0, 40) });
       const merchant = typeof o.merchant === 'string' && o.merchant.trim()
         ? o.merchant.trim().slice(0, 200)
         : null;
@@ -323,6 +331,20 @@ function normalizeTime(value: unknown): string {
     return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
   }
   return '00:00';
+}
+
+/** Known non-EGP currency codes we infer from message text when LLM omits currency. */
+const INFERRABLE_CURRENCIES = ['USD', 'SAR', 'AED', 'KWD', 'BHD', 'QAR', 'OMR', 'EUR', 'GBP'];
+
+/** Infer currency from snippet (e.g. "USD 49.50" or "balance.USD") when LLM omitted it. */
+function inferCurrencyFromSnippet(snippet: string | null | undefined): string | null {
+  if (!snippet || typeof snippet !== 'string') return null;
+  const upper = snippet.toUpperCase();
+  for (const code of INFERRABLE_CURRENCIES) {
+    // Match whole-word style: "USD 49", "USD49", ".USD", "balance USD"
+    if (new RegExp(`\\b${code}\\b|\\b${code}\\d|[\\.\\s]${code}[\\s\\d]`).test(upper)) return code;
+  }
+  return null;
 }
 
 /** Keep currency as discovered by the LLM (e.g. EGP, USD, SAR, AED); default EGP if missing. */

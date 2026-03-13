@@ -1,8 +1,10 @@
 import { Router } from 'express';
+import { Decimal } from '@prisma/client/runtime/library';
 import { ingestAuthMiddleware, IngestRequest } from '../middleware/ingestAuth';
 import { prisma } from '../lib/prisma';
 import { normalizeDateToYYYYMMDD } from '../lib/date';
 import { suggestCategory } from '../services/categorization';
+import { amountToEgp } from '../services/exchange-rates';
 import { extractTransactionsFromSMS, type LearningExample } from '../services/sms-extract';
 import { ensureDefaultCategories } from '../lib/seedDefaultCategories';
 
@@ -55,6 +57,12 @@ ingestRouter.post('/parsed', ingestAuthMiddleware, async (req: IngestRequest, re
     const merchant =
       anonymizedText && !/\d/.test(anonymizedText) && anonymizedText.length < 200 ? anonymizedText.trim() : null;
 
+    let egpVal: Decimal | null = null;
+    if (cur !== 'EGP' && Number.isFinite(parsedAmount)) {
+      const converted = await amountToEgp(cur, parsedAmount);
+      if (converted != null) egpVal = new Decimal(converted);
+    }
+
     const existing = await prisma.transaction.findFirst({
       where: {
         userId,
@@ -76,6 +84,7 @@ ingestRouter.post('/parsed', ingestAuthMiddleware, async (req: IngestRequest, re
         userId,
         amount: parsedAmount,
         currency: cur,
+        egpValue: egpVal ?? undefined,
         categoryId,
         date: dateStr,
         time: timeStr,
@@ -190,11 +199,19 @@ ingestRouter.post('/raw-sms', ingestAuthMiddleware, async (req: IngestRequest, r
         return;
       }
 
+      const cur = (extracted.currency || 'EGP').toString().toUpperCase().slice(0, 3);
+      let egpVal: Decimal | null = null;
+      if (cur !== 'EGP' && Number.isFinite(extracted.amount)) {
+        const converted = await amountToEgp(cur, extracted.amount);
+        if (converted != null) egpVal = new Decimal(converted);
+      }
+
       const transaction = await prisma.transaction.create({
         data: {
           userId,
           amount: extracted.amount,
-          currency: extracted.currency,
+          currency: cur,
+          egpValue: egpVal ?? undefined,
           categoryId,
           date: dateNorm,
           time: extracted.time,

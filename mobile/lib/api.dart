@@ -15,12 +15,15 @@ class Api {
     return h;
   }
 
+  /// Timeout for HTTP calls. Long enough for Render.com cold start (~60s).
+  static const Duration _timeout = Duration(seconds: 90);
+
   Future<Map<String, dynamic>> post(String path, Map<String, dynamic> body) async {
     final r = await http.post(
       Uri.parse('$baseUrl$path'),
       headers: _headers,
       body: jsonEncode(body),
-    );
+    ).timeout(_timeout);
     return _handle(r);
   }
 
@@ -29,7 +32,7 @@ class Api {
     if (queryParams != null && queryParams.isNotEmpty) {
       uri = uri.replace(queryParameters: queryParams);
     }
-    final r = await http.get(uri, headers: _headers);
+    final r = await http.get(uri, headers: _headers).timeout(_timeout);
     return _handle(r);
   }
 
@@ -38,12 +41,12 @@ class Api {
       Uri.parse('$baseUrl$path'),
       headers: _headers,
       body: jsonEncode(body),
-    );
+    ).timeout(_timeout);
     return _handle(r);
   }
 
   Future<Map<String, dynamic>> delete(String path) async {
-    final r = await http.delete(Uri.parse('$baseUrl$path'), headers: _headers);
+    final r = await http.delete(Uri.parse('$baseUrl$path'), headers: _headers).timeout(_timeout);
     if (r.statusCode == 204) return {};
     return _handle(r);
   }

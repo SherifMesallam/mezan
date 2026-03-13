@@ -1,9 +1,11 @@
 import { Router } from 'express';
+import { Decimal } from '@prisma/client/runtime/library';
 import { prisma } from '../lib/prisma';
 import { normalizeDateToYYYYMMDD } from '../lib/date';
 import { authMiddleware, AuthRequest } from '../middleware/auth';
 import { ensureDefaultCategories } from '../lib/seedDefaultCategories';
 import { suggestCategory } from '../services/categorization';
+import { amountToEgp } from '../services/exchange-rates';
 import {
   extractTransactionsFromSheet,
   matchSheetRowsToExisting,
@@ -245,13 +247,14 @@ importRouter.post('/sms-merge-preview', async (req: AuthRequest, res) => {
     }
 
     const items = extracted.map((ext, i) => {
+      console.log(`${logPrefix} Preview row ${i} extracted:`, { amount: ext.amount, currency: ext.currency, merchant: ext.merchant?.slice(0, 30) });
       const dateNorm = normalizeDateToYYYYMMDD(ext.date, expected_months.length > 0 ? expected_months : undefined);
       if (!dateNorm) {
         console.log(`${logPrefix} Row ${i}: date could not be normalized -> no match. ext.date=${JSON.stringify(ext.date)}`);
         return {
           sheet_index: i,
           amount: ext.amount,
-          currency: ext.currency,
+          currency: ext.currency ?? 'EGP',
           date: ext.date,
           time: ext.time,
           category_name: ext.suggested_category ?? 'Other',
@@ -345,10 +348,10 @@ importRouter.post('/sms-merge-preview', async (req: AuthRequest, res) => {
           }
         : null;
 
-      return {
+      const item = {
         sheet_index: i,
         amount: ext.amount,
-        currency: ext.currency,
+        currency: ext.currency ?? 'EGP',
         date: dateUsed,
         time: ext.time,
         category_name: ext.suggested_category ?? 'Other',
@@ -357,6 +360,8 @@ importRouter.post('/sms-merge-preview', async (req: AuthRequest, res) => {
         matched_entry_id: best?.id ?? null,
         matched_entry,
       };
+      console.log(`${logPrefix} Preview row ${i} response:`, { currency: item.currency, amount: item.amount });
+      return item;
     });
 
     res.json({ items });
@@ -592,6 +597,7 @@ importRouter.post('/sms-merge-confirm', async (req: AuthRequest, res) => {
       res.status(422).json({ error: 'items array is required' });
       return;
     }
+    console.log('[SMS-MERGE-CONFIRM] Received body.items (first 3):', JSON.stringify((items as unknown[]).slice(0, 3), null, 2));
 
     const toCreate = items.filter((x: { action?: string }) => x.action === 'add_new') as Array<{
       sheet_index: number;
@@ -666,15 +672,31 @@ importRouter.post('/sms-merge-confirm', async (req: AuthRequest, res) => {
       }
       if (!categoryId) continue;
 
-      const currency = (row.currency && String(row.currency).toUpperCase().slice(0, 3)) || 'EGP';
+      const currencyRaw = row.currency != null ? String(row.currency).trim().toUpperCase().slice(0, 3) : '';
+      const currency = currencyRaw && /^[A-Z]{3}$/.test(currencyRaw) ? currencyRaw : 'EGP';
       const timeStr = row.time != null ? String(row.time).trim().slice(0, 20) : null;
       const tagIds = Array.isArray(row.tag_ids) ? row.tag_ids.filter((id) => validTagIdSet.has(id)) : [];
+      let egpVal: Decimal | null = null;
+      if (currency !== 'EGP') {
+        const converted = await amountToEgp(currency, amount);
+        if (converted != null) egpVal = new Decimal(converted);
+        console.log('[SMS-MERGE-CONFIRM] Create row:', {
+          row_currency: row.currency,
+          currencyRaw,
+          currency,
+          amount,
+          egpValue: egpVal != null ? Number(egpVal) : null,
+        });
+      } else {
+        console.log('[SMS-MERGE-CONFIRM] Create row (EGP, no conversion):', { row_currency: row.currency, currencyRaw, currency, amount });
+      }
 
       const transaction = await prisma.transaction.create({
         data: {
           userId,
           amount,
           currency,
+          egpValue: egpVal ?? undefined,
           categoryId,
           date: dateNorm,
           time: timeStr,
@@ -866,12 +888,18 @@ importRouter.post('/sheet-merge-confirm', async (req: AuthRequest, res) => {
 
       const currency = (row.currency && String(row.currency).toUpperCase().slice(0, 3)) || 'EGP';
       const tagIds = Array.isArray(row.tag_ids) ? row.tag_ids.filter((id) => validTagIdSet.has(id)) : [];
+      let egpVal: Decimal | null = null;
+      if (currency !== 'EGP') {
+        const converted = await amountToEgp(currency, amount);
+        if (converted != null) egpVal = new Decimal(converted);
+      }
 
       const transaction = await prisma.transaction.create({
         data: {
           userId,
           amount,
           currency,
+          egpValue: egpVal ?? undefined,
           categoryId,
           date,
           time: null,
@@ -1104,13 +1132,20 @@ importRouter.post('/data', async (req: AuthRequest, res) => {
       for (const t of transactions) {
         if (!t.id || !t.categoryId || !categoryIds.has(t.categoryId) || !t.date) continue;
         const tagIdsForTx = Array.isArray(t.tagIds) ? t.tagIds.filter((id) => tagIds.has(id)) : [];
+        const amount = Number(t.amount) || 0;
+        const currency = (t.currency && String(t.currency).slice(0, 10)) || 'EGP';
+        let egpVal: number | null = t.egpValue != null && !Number.isNaN(Number(t.egpValue)) ? Number(t.egpValue) : null;
+        if (egpVal == null && currency !== 'EGP' && Number.isFinite(amount)) {
+          const converted = await amountToEgp(currency, amount);
+          if (converted != null) egpVal = converted;
+        }
         await tx.transaction.create({
           data: {
             id: t.id,
             userId,
-            amount: Number(t.amount) || 0,
-            currency: (t.currency && String(t.currency).slice(0, 10)) || 'EGP',
-            egpValue: t.egpValue != null && !Number.isNaN(Number(t.egpValue)) ? Number(t.egpValue) : null,
+            amount,
+            currency,
+            egpValue: egpVal != null ? new Decimal(egpVal) : null,
             categoryId: t.categoryId,
             date: t.date.slice(0, 10),
             time: t.time != null ? String(t.time).slice(0, 30) : null,
