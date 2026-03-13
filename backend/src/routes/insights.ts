@@ -350,7 +350,7 @@ function parseHour(timeStr: string): number {
 
 /**
  * GET /v1/insights/predict-end-of-month
- * Query: month (YYYY-MM). Uses AI to predict total spend by end of month given spending so far.
+ * Query: month (YYYY-MM). Returns optimistic (recurring-only projection) and worst-case (daily average) predictions.
  */
 insightsRouter.get('/predict-end-of-month', async (req: AuthRequest, res) => {
   try {
@@ -368,82 +368,58 @@ insightsRouter.get('/predict-end-of-month', async (req: AuthRequest, res) => {
 
     const transactions = await prisma.transaction.findMany({
       where: { userId, date: { gte: start, lte: currentDate } },
-      select: { amount: true, egpValue: true, date: true },
+      select: { amount: true, egpValue: true, date: true, merchant: true },
     });
     const spentSoFar = transactions.reduce((s, t) => s + effectiveAmount(t), 0);
     const startDate = new Date(start + 'T12:00:00Z');
     const currentDateObj = new Date(currentDate + 'T12:00:00Z');
-    const daysElapsed = Math.round((currentDateObj.getTime() - startDate.getTime()) / 86400000) + 1;
+    const daysElapsed = Math.max(1, Math.round((currentDateObj.getTime() - startDate.getTime()) / 86400000) + 1);
     const daysInMonth = Math.round((endDate.getTime() - startDate.getTime()) / 86400000) + 1;
     const daysRemaining = Math.max(0, daysInMonth - daysElapsed);
 
-    const apiKey = process.env.OPENAI_API_KEY?.trim();
-    if (!apiKey) {
-      const fallbackTotal = daysInMonth > 0 ? (spentSoFar / daysElapsed) * daysInMonth : spentSoFar;
-      return res.json({
-        prediction_text: `Based on daily average so far (EGP ${(spentSoFar / daysElapsed).toFixed(0)}/day), projected total: EGP ${Math.round(fallbackTotal)}.`,
-        predicted_total: Math.round(fallbackTotal * 100) / 100,
-        spent_so_far: Math.round(spentSoFar * 100) / 100,
-        days_elapsed: daysElapsed,
-        days_remaining: daysRemaining,
-      });
+    // Group by vendor (merchant); recurring = vendors with 2+ transactions
+    const byMerchant = new Map<string, { count: number; total: number }>();
+    for (const t of transactions) {
+      const merchant = (t.merchant || '').trim() || 'Unknown';
+      const amt = effectiveAmount(t);
+      const cur = byMerchant.get(merchant);
+      if (!cur) byMerchant.set(merchant, { count: 1, total: amt });
+      else { cur.count += 1; cur.total += amt; }
     }
-
-    const baseURL = (process.env.OPENAI_BASE_URL?.trim() || 'https://api.openai.com/v1').replace(/\/$/, '');
-    const model = process.env.OPENAI_MODEL?.trim() || 'gpt-4o-mini';
-    const prompt = `You are a personal finance assistant. Given:
-- Today is ${currentDate} (day ${daysElapsed} of the month, ${daysRemaining} days left).
-- Total spending so far this month: EGP ${Math.round(spentSoFar)}.
-- Number of transactions so far: ${transactions.length}.
-
-Predict the total spending by end of this month (EGP). Reply in two lines:
-1. One short sentence explaining your prediction (e.g. "Spending is steady; expect similar daily rate.").
-2. A line that says exactly: "Predicted total: EGP X" where X is a number (no decimals).`;
-
-    const response = await fetch(`${baseURL}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model,
-        messages: [{ role: 'user', content: prompt }],
-        max_tokens: 150,
-        temperature: 0.3,
-      }),
-    });
-
-    if (!response.ok) {
-      const err = await response.text();
-      const fallbackTotal = daysInMonth > 0 ? (spentSoFar / daysElapsed) * daysInMonth : spentSoFar;
-      return res.json({
-        prediction_text: `Based on daily average: EGP ${Math.round(fallbackTotal)} by end of month.`,
-        predicted_total: Math.round(fallbackTotal * 100) / 100,
-        spent_so_far: Math.round(spentSoFar * 100) / 100,
-        days_elapsed: daysElapsed,
-        days_remaining: daysRemaining,
-      });
+    let recurringTotal = 0;
+    let recurringVendorsCount = 0;
+    for (const [, v] of byMerchant) {
+      if (v.count >= 2) {
+        recurringTotal += v.total;
+        recurringVendorsCount += 1;
+      }
     }
+    const oneOffTotal = Math.round((spentSoFar - recurringTotal) * 100) / 100;
 
-    const data = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> };
-    const content = data.choices?.[0]?.message?.content?.trim() ?? '';
-    const lineMatch = content.match(/Predicted total:\s*EGP\s*([\d,]+(?:\.\d+)?)/i);
-    const numFromLine = lineMatch ? parseFloat(lineMatch[1].replace(/,/g, '')) : NaN;
-    const egpMatches = [...content.matchAll(/EGP\s*([\d,]+(?:\.\d+)?)/gi)];
-    const lastEgp = egpMatches.length > 0 ? parseFloat(egpMatches[egpMatches.length - 1][1].replace(/,/g, '')) : NaN;
-    const fallback = daysInMonth > 0 ? (spentSoFar / daysElapsed) * daysInMonth : spentSoFar;
-    const predicted_total = Number.isFinite(numFromLine) ? numFromLine : (Number.isFinite(lastEgp) ? lastEgp : fallback);
+    // Optimistic: only recurring spend is projected to continue at same rate
+    const recurringDailyRate = daysElapsed > 0 ? recurringTotal / daysElapsed : 0;
+    const optimisticProjectedAdditional = recurringDailyRate * daysRemaining;
+    const optimisticPredictedTotal = Math.round((spentSoFar + optimisticProjectedAdditional) * 100) / 100;
 
-    const prediction_text = content.split('\n')[0]?.trim() || `Projected total: EGP ${Math.round(predicted_total)}.`;
+    // Worst case: current daily rate continues for full month
+    const dailyRate = spentSoFar / daysElapsed;
+    const worstCasePredictedTotal = Math.round(dailyRate * daysInMonth * 100) / 100;
 
-    res.json({
-      prediction_text,
-      predicted_total: Math.round(predicted_total * 100) / 100,
+    const payload = {
       spent_so_far: Math.round(spentSoFar * 100) / 100,
       days_elapsed: daysElapsed,
       days_remaining: daysRemaining,
-    });
+      recurring_total: Math.round(recurringTotal * 100) / 100,
+      one_off_total: oneOffTotal,
+      recurring_vendors_count: recurringVendorsCount,
+      optimistic_predicted_total: optimisticPredictedTotal,
+      worst_case_predicted_total: worstCasePredictedTotal,
+      optimistic_text: recurringVendorsCount > 0
+        ? `Only recurring spending (${recurringVendorsCount} vendor(s), EGP ${Math.round(recurringTotal)} so far) is projected to continue. One-off spend not repeated.`
+        : 'No recurring vendors (same merchant 2+ times) this month; projection equals spending so far.',
+      worst_case_text: `If current daily rate (EGP ${Math.round(dailyRate)}/day) continues through month end.`,
+    };
+    res.json(payload);
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'Failed to get prediction' });

@@ -760,20 +760,60 @@ class _InsightRow extends StatelessWidget {
   final String answer;
   final ThemeData theme;
 
+  /// Builds rich text with numbers and EGP amounts emphasized (bold + primary color).
+  static InlineSpan _buildAnswerSpans(String text, ThemeData theme) {
+    final baseStyle = theme.textTheme.bodyMedium?.copyWith(
+      fontWeight: FontWeight.w600,
+      color: theme.colorScheme.onSurface,
+    ) ?? TextStyle(fontWeight: FontWeight.w600, color: theme.colorScheme.onSurface);
+    final numberStyle = theme.textTheme.bodyMedium?.copyWith(
+      fontWeight: FontWeight.bold,
+      color: theme.colorScheme.primary,
+    ) ?? TextStyle(fontWeight: FontWeight.bold, color: theme.colorScheme.primary);
+
+    // Match EGP 1234, +12.3%, -5.2%, or standalone integers/floats that look like amounts
+    final re = RegExp(r'(EGP\s*[\d,]+(?:\.\d+)?|[-+]?\d+(?:,\d{3})*(?:\.\d+)?%?)');
+    final spans = <InlineSpan>[];
+    int lastEnd = 0;
+    for (final m in re.allMatches(text)) {
+      if (m.start > lastEnd) {
+        spans.add(TextSpan(text: text.substring(lastEnd, m.start), style: baseStyle));
+      }
+      spans.add(TextSpan(text: m.group(0), style: numberStyle));
+      lastEnd = m.end;
+    }
+    if (lastEnd < text.length) {
+      spans.add(TextSpan(text: text.substring(lastEnd), style: baseStyle));
+    }
+    if (spans.isEmpty) {
+      spans.add(TextSpan(text: text, style: baseStyle));
+    }
+    return TextSpan(children: spans);
+  }
+
   @override
   Widget build(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(question, style: theme.textTheme.labelMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
-        const SizedBox(height: 2),
-        Text(answer, style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w500)),
+        Text(
+          question,
+          style: theme.textTheme.labelMedium?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+        const SizedBox(height: 6),
+        Text.rich(
+          _buildAnswerSpans(answer, theme),
+          textAlign: TextAlign.start,
+        ),
       ],
     );
   }
 }
 
-/// Prediction: AI-predicted total spend by end of month.
+/// Prediction: optimistic (recurring-based) and worst-case (daily rate) end-of-month totals.
 class _PredictionSection extends StatelessWidget {
   const _PredictionSection({required this.prediction});
 
@@ -782,36 +822,95 @@ class _PredictionSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final text = prediction['prediction_text'] as String? ?? '';
-    final total = prediction['predicted_total'] as num?;
-    final spent = prediction['spent_so_far'] as num?;
+    final spent = (prediction['spent_so_far'] as num?)?.toDouble();
     final daysRemaining = prediction['days_remaining'] as int?;
+    final optimisticTotal = (prediction['optimistic_predicted_total'] as num?)?.toDouble();
+    final worstCaseTotal = (prediction['worst_case_predicted_total'] as num?)?.toDouble();
+    final optimisticText = prediction['optimistic_text'] as String? ?? '';
+    final worstCaseText = prediction['worst_case_text'] as String? ?? '';
+
+    final labelStyle = theme.textTheme.labelMedium?.copyWith(
+      color: theme.colorScheme.onSurfaceVariant,
+      fontWeight: FontWeight.w500,
+    );
+    final bodyStyle = theme.textTheme.bodyMedium?.copyWith(
+      color: theme.colorScheme.onSurface,
+      height: 1.35,
+    );
+    final amountStyle = theme.textTheme.titleSmall?.copyWith(
+      fontWeight: FontWeight.bold,
+      color: theme.colorScheme.primary,
+    );
+    final subtitleStyle = theme.textTheme.bodySmall?.copyWith(
+      color: theme.colorScheme.onSurfaceVariant,
+    );
+
     return Card(
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Text(
               'Given current spending, how much total spend is predicted by end of month?',
-              style: theme.textTheme.labelMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+              style: labelStyle,
             ),
-            const SizedBox(height: 8),
-            if (text.isNotEmpty)
-              Text(text, style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w500)),
-            if (total != null) ...[
-              const SizedBox(height: 6),
-              Text(
-                'Predicted total: EGP ${total.toStringAsFixed(0)}',
-                style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold),
+            const SizedBox(height: 12),
+            if (spent != null || daysRemaining != null)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: Text.rich(
+                  TextSpan(
+                    style: subtitleStyle,
+                    children: [
+                      if (spent != null)
+                        TextSpan(
+                          text: 'Spent so far: ',
+                          style: subtitleStyle,
+                        ),
+                      if (spent != null)
+                        TextSpan(
+                          text: 'EGP ${spent.toStringAsFixed(0)}',
+                          style: subtitleStyle?.copyWith(
+                            fontWeight: FontWeight.w600,
+                            color: theme.colorScheme.primary,
+                          ),
+                        ),
+                      if (spent != null && daysRemaining != null)
+                        const TextSpan(text: '  ·  '),
+                      if (daysRemaining != null)
+                        TextSpan(text: '$daysRemaining days left in month'),
+                    ],
+                  ),
+                ),
               ),
-            ],
-            if (spent != null || daysRemaining != null) ...[
+            if (optimisticTotal != null) ...[
+              Text('Optimistic prediction', style: labelStyle),
               const SizedBox(height: 4),
               Text(
-                'Spent so far: EGP ${(spent ?? 0).toStringAsFixed(0)}${daysRemaining != null ? ' · $daysRemaining days left' : ''}',
-                style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                'EGP ${optimisticTotal.toStringAsFixed(0)}',
+                style: amountStyle?.copyWith(fontSize: (amountStyle?.fontSize ?? 14) + 2),
               ),
+              if (optimisticText.isNotEmpty) ...[
+                const SizedBox(height: 4),
+                Text(optimisticText, style: bodyStyle, maxLines: 4, overflow: TextOverflow.ellipsis),
+              ],
+              const SizedBox(height: 16),
+            ],
+            if (worstCaseTotal != null) ...[
+              Text('Worst case', style: labelStyle),
+              const SizedBox(height: 4),
+              Text(
+                'EGP ${worstCaseTotal.toStringAsFixed(0)}',
+                style: amountStyle?.copyWith(
+                  fontSize: (amountStyle?.fontSize ?? 14) + 2,
+                  color: theme.colorScheme.error,
+                ),
+              ),
+              if (worstCaseText.isNotEmpty) ...[
+                const SizedBox(height: 4),
+                Text(worstCaseText, style: bodyStyle, maxLines: 2, overflow: TextOverflow.ellipsis),
+              ],
             ],
           ],
         ),
