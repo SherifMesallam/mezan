@@ -20,15 +20,29 @@ transactionsRouter.get('/', async (req: AuthRequest, res) => {
     const to = typeof toRaw === 'string' ? toRaw.trim().slice(0, 10) : undefined;
     const categoryId = req.query.category_id as string | undefined;
     const tagId = req.query.tag_id as string | undefined;
+    const qRaw = req.query.q as string | undefined;
+    const q = typeof qRaw === 'string' ? qRaw.trim().toLowerCase() : '';
     const limit = Math.min(parseInt(req.query.limit as string) || 50, 2000);
 
-    const where: { userId: string; date?: { gte?: string; lte?: string }; categoryId?: string; tags?: { some: { tagId: string } } } = {
-      userId,
+    type WhereType = {
+      userId: string;
+      date?: { gte?: string; lte?: string };
+      categoryId?: string;
+      tags?: { some: { tagId: string } };
+      OR?: Array<Record<string, unknown>>;
     };
+    const where: WhereType = { userId };
     if (from && /^\d{4}-\d{2}-\d{2}$/.test(from)) where.date = { ...where.date, gte: from };
     if (to && /^\d{4}-\d{2}-\d{2}$/.test(to)) where.date = { ...where.date, lte: to };
     if (categoryId) where.categoryId = categoryId;
     if (tagId) where.tags = { some: { tagId } };
+    if (q.length > 0) {
+      where.OR = [
+        { merchant: { contains: q, mode: 'insensitive' as const } },
+        { category: { name: { contains: q, mode: 'insensitive' as const } } },
+        { tags: { some: { tag: { name: { contains: q, mode: 'insensitive' as const } } } } },
+      ];
+    }
 
     const [transactions, totalCount] = await Promise.all([
       prisma.transaction.findMany({

@@ -1,4 +1,4 @@
-import { useState, useEffect, Children, isValidElement, cloneElement, type ReactElement } from 'react';
+import { useState, useEffect, useMemo, Children, isValidElement, cloneElement, type ReactElement } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import {
   PieChart,
@@ -31,6 +31,9 @@ type Transaction = {
   merchant: string | null;
   category_id?: string;
   category: { id: string; name: string } | null;
+  egp_value?: number | null;
+  tag_ids?: string[];
+  tags?: { id: string; name: string }[];
 };
 
 type Category = { id: string; name: string };
@@ -336,6 +339,38 @@ function timeRangeSummary(useAllTime: boolean, useDateRange: boolean, month: str
   return `Showing data for ${formatMonthLabel(month)}`;
 }
 
+function getPresetDateRange(preset: 'last7' | 'last30' | 'fiscalYear'): [string, string] {
+  const today = new Date();
+  const y = today.getFullYear();
+  const m = String(today.getMonth() + 1).padStart(2, '0');
+  const d = String(today.getDate()).padStart(2, '0');
+  const todayStr = `${y}-${m}-${d}`;
+  if (preset === 'last7') {
+    const from = new Date(today);
+    from.setDate(from.getDate() - 6);
+    const f = from.toISOString().slice(0, 10);
+    return [f, todayStr];
+  }
+  if (preset === 'last30') {
+    const from = new Date(today);
+    from.setDate(from.getDate() - 29);
+    const f = from.toISOString().slice(0, 10);
+    return [f, todayStr];
+  }
+  return [`${y}-01-01`, `${y}-12-31`];
+}
+
+function getThisWeekRange(): [string, string] {
+  const today = new Date();
+  const day = today.getDay();
+  const monOffset = day === 0 ? -6 : 1 - day;
+  const mon = new Date(today);
+  mon.setDate(today.getDate() + monOffset);
+  const sun = new Date(mon);
+  sun.setDate(mon.getDate() + 6);
+  return [mon.toISOString().slice(0, 10), sun.toISOString().slice(0, 10)];
+}
+
 function hourLabel(hour: number): string {
   if (hour === 0) return 'midnight';
   if (hour === 12) return 'noon';
@@ -636,6 +671,10 @@ export default function Home() {
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [refreshCounter, setRefreshCounter] = useState(0);
+  const [quickFilter, setQuickFilter] = useState<'over_budget' | 'uncategorized' | 'this_week' | 'recurring' | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [debouncedSearchForApi, setDebouncedSearchForApi] = useState('');
+  const [deletedForUndo, setDeletedForUndo] = useState<Transaction | null>(null);
   type SummarySortKey = 'category_name' | 'budget' | 'actual' | 'difference';
   const [summarySortKey, setSummarySortKey] = useState<SummarySortKey | null>(null);
   const [summarySortDir, setSummarySortDir] = useState<'asc' | 'desc'>('asc');
@@ -649,6 +688,11 @@ export default function Home() {
     }
   }, [sectionOrder]);
 
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearchForApi(searchQuery), 400);
+    return () => clearTimeout(t);
+  }, [searchQuery]);
+
   const [from, to] = useAllTime ? ['2000-01-01', '2030-12-31'] : useDateRange ? [dateFrom, dateTo] : monthRange(month);
 
   useEffect(() => {
@@ -659,10 +703,6 @@ export default function Home() {
       token,
       query: { from, to },
     }).catch(() => null);
-    const predictionPromise = api<Prediction>('/v1/insights/predict-end-of-month', {
-      token,
-      query: { month },
-    }).catch(() => null);
     const explanationPromise = api<SpendingExplanation>('/v1/insights/spending-explanation', {
       token,
       query: { from, to },
@@ -671,6 +711,10 @@ export default function Home() {
       token,
       query: { from, to },
     }).catch(() => ({ anomalies: [] }));
+    const predictionPromise = api<Prediction>('/v1/insights/predict-end-of-month', {
+      token,
+      query: debouncedSearchForApi.trim() ? { month, q: debouncedSearchForApi.trim() } : { month },
+    }).catch(() => null);
 
     Promise.all([
       api<{ transactions: Transaction[]; total_count?: number }>('/v1/transactions', {
@@ -680,7 +724,7 @@ export default function Home() {
       api<{ categories: { id: string; name: string }[] }>('/v1/categories', { token }),
       api<{ budget_status: BudgetStatus[] }>('/v1/insights/budget-status', {
         token,
-        query: { month },
+        query: { month: useAllTime ? currentMonth : month },
       }),
       api<{ summary: SummaryItem[] }>('/v1/insights/summary', {
         token,
@@ -693,7 +737,7 @@ export default function Home() {
         total_difference: number;
       }>('/v1/insights/budget-by-category', {
         token,
-        query: useAllTime ? { month, from, to } : { month },
+        query: { month: useAllTime ? currentMonth : month },
       }),
       insightsPromise,
       predictionPromise,
@@ -713,28 +757,196 @@ export default function Home() {
       })
       .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load'))
       .finally(() => setLoading(false));
-  }, [token, month, from, to, refreshCounter]);
+  }, [token, month, from, to, useAllTime, currentMonth, refreshCounter, debouncedSearchForApi]);
+
+  useEffect(() => {
+    if (!deletedForUndo) return;
+    const t = setTimeout(() => setDeletedForUndo(null), 5000);
+    return () => clearTimeout(t);
+  }, [deletedForUndo]);
 
   const nameById = Object.fromEntries((budgetByCategory?.items || []).map((r) => [r.category_id, r.category_name]));
-  const pieData = summary.map((s, i) => ({
-    name: nameById[s.key] || s.key,
-    value: s.total,
-    color: PIE_COLORS[i % PIE_COLORS.length],
-  }));
-  const barData = (budgetByCategory?.items || []).map((row) => ({
+  const merchantCount = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const t of transactions) {
+      const k = (t.merchant || '').trim() || '—';
+      m.set(k, (m.get(k) || 0) + 1);
+    }
+    return m;
+  }, [transactions]);
+
+  const filteredTransactions = useMemo(() => {
+    let list = transactions;
+    const q = searchQuery.trim().toLowerCase();
+    if (q) {
+      list = list.filter((t) => {
+        const merchant = (t.merchant ?? '').toLowerCase();
+        const cat = (t.category?.name ?? '').toLowerCase();
+        const tags = (t.tags ?? []).map((x) => x.name.toLowerCase()).join(' ');
+        return merchant.includes(q) || cat.includes(q) || tags.includes(q);
+      });
+    }
+    if (quickFilter === 'uncategorized') {
+      list = list.filter((t) => !t.category_id || !t.category);
+    } else if (quickFilter === 'recurring') {
+      list = list.filter((t) => (merchantCount.get((t.merchant || '').trim() || '—') || 0) >= 2);
+    }
+    return list;
+  }, [transactions, searchQuery, quickFilter, merchantCount]);
+
+  const hasTransactionFilter = searchQuery.trim() !== '' || quickFilter === 'uncategorized' || quickFilter === 'recurring';
+
+  function effectiveAmount(t: Transaction): number {
+    return t.egp_value != null ? t.egp_value : t.amount;
+  }
+
+  const filteredSummaryFromTx = useMemo(() => {
+    if (!hasTransactionFilter) return null;
+    const byCat = new Map<string, { total: number; name: string }>();
+    for (const t of filteredTransactions) {
+      const cid = t.category_id || t.category?.id || 'uncategorized';
+      const name = t.category?.name || 'Uncategorized';
+      const amt = effectiveAmount(t);
+      const cur = byCat.get(cid);
+      if (!cur) byCat.set(cid, { total: amt, name });
+      else {
+        cur.total += amt;
+      }
+    }
+    return Array.from(byCat.entries()).map(([key, v]) => ({ key, total: Math.round(v.total * 100) / 100, name: v.name }));
+  }, [hasTransactionFilter, filteredTransactions]);
+
+  const filteredActualByCategory = useMemo(() => {
+    if (!hasTransactionFilter) return null;
+    const m = new Map<string, number>();
+    for (const t of filteredTransactions) {
+      const cid = t.category_id || t.category?.id || '';
+      if (!cid) continue;
+      m.set(cid, (m.get(cid) || 0) + effectiveAmount(t));
+    }
+    return m;
+  }, [hasTransactionFilter, filteredTransactions]);
+
+  const pieData = hasTransactionFilter && filteredSummaryFromTx && filteredSummaryFromTx.length > 0
+    ? filteredSummaryFromTx.map((s, i) => ({
+        name: s.name,
+        value: s.total,
+        color: PIE_COLORS[i % PIE_COLORS.length],
+      }))
+    : summary.map((s, i) => ({
+        name: nameById[s.key] || s.key,
+        value: s.total,
+        color: PIE_COLORS[i % PIE_COLORS.length],
+      }));
+
+  const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const filteredInsights = useMemo((): SpendingPatterns | null => {
+    if (!hasTransactionFilter || filteredTransactions.length === 0) return null;
+    const byHour = new Map<number, number>();
+    const byDayOfMonth = new Map<number, number>();
+    const byDayOfWeek = new Map<number, number>();
+    const byVendor = new Map<string, number>();
+    const byCategory = new Map<string, number>();
+    let largest: { amount: number; date: string; merchant: string; category_name: string } | null = null;
+    for (const t of filteredTransactions) {
+      const amt = effectiveAmount(t);
+      const d = t.date ? new Date(t.date.slice(0, 10)) : null;
+      if (t.time) {
+        const hour = parseInt(t.time.slice(0, 2), 10);
+        if (!isNaN(hour)) byHour.set(hour, (byHour.get(hour) || 0) + amt);
+      }
+      if (d) {
+        byDayOfMonth.set(d.getDate(), (byDayOfMonth.get(d.getDate()) || 0) + amt);
+        byDayOfWeek.set(d.getDay(), (byDayOfWeek.get(d.getDay()) || 0) + amt);
+      }
+      const vendor = (t.merchant || '').trim() || '—';
+      byVendor.set(vendor, (byVendor.get(vendor) || 0) + amt);
+      const cat = t.category?.name || 'Uncategorized';
+      byCategory.set(cat, (byCategory.get(cat) || 0) + amt);
+      if (!largest || amt > largest.amount) {
+        largest = {
+          amount: amt,
+          date: t.date?.slice(0, 10) || '',
+          merchant: t.merchant || '—',
+          category_name: t.category?.name || 'Uncategorized',
+        };
+      }
+    }
+    const peakHour = byHour.size > 0
+      ? [...byHour.entries()].reduce((a, b) => (b[1] > a[1] ? b : a), [0, 0])
+      : null;
+    const peakDayM = byDayOfMonth.size > 0
+      ? [...byDayOfMonth.entries()].reduce((a, b) => (b[1] > a[1] ? b : a), [0, 0])
+      : null;
+    const peakDayW = byDayOfWeek.size > 0
+      ? [...byDayOfWeek.entries()].reduce((a, b) => (b[1] > a[1] ? b : a), [0, 0])
+      : null;
+    const topV = byVendor.size > 0
+      ? [...byVendor.entries()].reduce((a, b) => (b[1] > a[1] ? b : a), ['', 0])
+      : null;
+    const topC = byCategory.size > 0
+      ? [...byCategory.entries()].reduce((a, b) => (b[1] > a[1] ? b : a), ['', 0])
+      : null;
+    return {
+      peak_time_of_day: peakHour ? { hour: peakHour[0], amount: peakHour[1] } : null,
+      peak_day_of_month: peakDayM ? { day: peakDayM[0], amount: peakDayM[1] } : null,
+      peak_day_of_week: peakDayW ? { day_of_week: peakDayW[0], day_name: DAY_NAMES[peakDayW[0]], amount: peakDayW[1] } : null,
+      top_vendor: topV ? { name: topV[0], amount: topV[1] } : null,
+      top_category: topC ? { name: topC[0], amount: topC[1] } : null,
+      spending_trend: null,
+      largest_transaction: largest,
+    };
+  }, [hasTransactionFilter, filteredTransactions]);
+
+  const displayInsights = hasTransactionFilter ? (filteredInsights ?? undefined) : insights;
+
+  const filteredBudgetItems = useMemo(() => {
+    const items = budgetByCategory?.items ?? [];
+    let rows = items;
+    if (hasTransactionFilter && filteredActualByCategory) {
+      rows = items.map((row) => {
+        const actual = filteredActualByCategory.get(row.category_id) ?? 0;
+        return {
+          ...row,
+          actual: Math.round(actual * 100) / 100,
+          difference: Math.round((row.budget - actual) * 100) / 100,
+        };
+      });
+    }
+    if (quickFilter === 'over_budget') {
+      return rows.filter((row) => row.budget > 0 && row.actual > row.budget);
+    }
+    return rows;
+  }, [budgetByCategory?.items, quickFilter, hasTransactionFilter, filteredActualByCategory]);
+
+  const barData = filteredBudgetItems.map((row) => ({
     name: row.category_name.length > 12 ? row.category_name.slice(0, 11) + '…' : row.category_name,
     fullName: row.category_name,
     budget: row.budget,
     actual: row.actual,
   }));
 
-  const totalSpent = budgetByCategory?.total_actual ?? 0;
+  const totalsForDisplay = quickFilter === 'over_budget'
+    ? filteredBudgetItems.reduce(
+        (acc, row) => ({
+          budget: acc.budget + row.budget,
+          actual: acc.actual + row.actual,
+          difference: acc.difference + (row.budget - row.actual),
+        }),
+        { budget: 0, actual: 0, difference: 0 }
+      )
+    : null;
+
+  const fullTotalSpent = budgetByCategory?.total_actual ?? 0;
   const totalBudget = budgetByCategory?.total_budget ?? 0;
-  const totalRemaining = totalBudget - totalSpent;
-  const exceedsBudget = totalBudget > 0 && totalSpent > totalBudget;
+  const totalSpent = hasTransactionFilter
+    ? filteredTransactions.reduce((s, t) => s + effectiveAmount(t), 0)
+    : fullTotalSpent;
+  const totalRemaining = totalBudget - fullTotalSpent;
+  const exceedsBudget = totalBudget > 0 && fullTotalSpent > totalBudget;
 
   const sortedSummaryItems = (() => {
-    const items = budgetByCategory?.items ?? [];
+    const items = filteredBudgetItems;
     if (!summarySortKey) return items;
     const mult = summarySortDir === 'asc' ? 1 : -1;
     return [...items].sort((a, b) => {
@@ -776,7 +988,7 @@ export default function Home() {
   function isSectionVisible(sid: string): boolean {
     if (sid === 'spending-summary') return !!spendingExplanation?.explanation;
     if (sid === 'anomalies') return anomalies.length > 0;
-    if (sid === 'insights') return !!(insights && (insights.peak_time_of_day || insights.peak_day_of_month || insights.peak_day_of_week || insights.top_vendor || insights.top_category || insights.spending_trend || insights.largest_transaction));
+    if (sid === 'insights') return !!((displayInsights ?? insights) && ((displayInsights ?? insights).peak_time_of_day || (displayInsights ?? insights).peak_day_of_month || (displayInsights ?? insights).peak_day_of_week || (displayInsights ?? insights).top_vendor || (displayInsights ?? insights).top_category || (displayInsights ?? insights).spending_trend || (displayInsights ?? insights).largest_transaction));
     if (sid === 'prediction') return !!prediction;
     return true;
   }
@@ -860,6 +1072,48 @@ export default function Home() {
                 All time
               </button>
             </div>
+            <div className="home-timerange-presets">
+              <span className="home-timerange-presets-label">Presets:</span>
+              <button
+                type="button"
+                className="home-timerange-preset"
+                onClick={() => {
+                  setUseAllTime(false);
+                  setUseDateRange(true);
+                  const [f, t] = getPresetDateRange('last7');
+                  setDateFrom(f);
+                  setDateTo(t);
+                }}
+              >
+                Last 7 days
+              </button>
+              <button
+                type="button"
+                className="home-timerange-preset"
+                onClick={() => {
+                  setUseAllTime(false);
+                  setUseDateRange(true);
+                  const [f, t] = getPresetDateRange('last30');
+                  setDateFrom(f);
+                  setDateTo(t);
+                }}
+              >
+                Last 30 days
+              </button>
+              <button
+                type="button"
+                className="home-timerange-preset"
+                onClick={() => {
+                  setUseAllTime(false);
+                  setUseDateRange(true);
+                  const [f, t] = getPresetDateRange('fiscalYear');
+                  setDateFrom(f);
+                  setDateTo(t);
+                }}
+              >
+                This year
+              </button>
+            </div>
             <div className="home-timerange-panel">
               {!useAllTime && !useDateRange && (
                 <div className="home-timerange-panel-inner">
@@ -908,10 +1162,76 @@ export default function Home() {
         )}
       </div>
 
+      <div className="home-search-and-filters">
+        <div className="home-search-wrap">
+          <label className="label" htmlFor="home-search">Search</label>
+          <input
+            id="home-search"
+            type="search"
+            className="input home-search-input"
+            placeholder="Merchant, category, tag…"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            autoComplete="off"
+          />
+        </div>
+        <div className="home-quick-filters">
+          <span className="home-quick-filters-label">Quick filters:</span>
+          <button
+            type="button"
+            className={`home-quick-filter-chip ${quickFilter === 'this_week' ? 'home-quick-filter-chip--active' : ''}`}
+            onClick={() => {
+              if (quickFilter === 'this_week') {
+                setQuickFilter(null);
+                return;
+              }
+              setQuickFilter('this_week');
+              setUseAllTime(false);
+              setUseDateRange(true);
+              const [f, t] = getThisWeekRange();
+              setDateFrom(f);
+              setDateTo(t);
+            }}
+          >
+            This week
+          </button>
+          <button
+            type="button"
+            className={`home-quick-filter-chip ${quickFilter === 'over_budget' ? 'home-quick-filter-chip--active' : ''}`}
+            onClick={() => setQuickFilter(quickFilter === 'over_budget' ? null : 'over_budget')}
+          >
+            Over budget
+          </button>
+          <button
+            type="button"
+            className={`home-quick-filter-chip ${quickFilter === 'uncategorized' ? 'home-quick-filter-chip--active' : ''}`}
+            onClick={() => setQuickFilter(quickFilter === 'uncategorized' ? null : 'uncategorized')}
+          >
+            Uncategorized
+          </button>
+          <button
+            type="button"
+            className={`home-quick-filter-chip ${quickFilter === 'recurring' ? 'home-quick-filter-chip--active' : ''}`}
+            onClick={() => setQuickFilter(quickFilter === 'recurring' ? null : 'recurring')}
+          >
+            Recurring
+          </button>
+        </div>
+      </div>
+
+      {/* Filtered view banner */}
+      {hasTransactionFilter && (
+        <p className="home-filtered-banner" role="status">
+          Showing filtered view — totals, pie chart, budget table, and insights reflect your search/filters.
+          {searchQuery.trim() ? ' Predictions also reflect your search.' : ''}
+          {' '}Spending summary and anomalies use all transactions in the period.
+        </p>
+      )}
+
       {/* Summary cards */}
       <div className={`home-summary-cards ${prediction ? 'home-summary-cards--three' : ''}`}>
         <div className="home-summary-card">
-          <span className="home-summary-card-label">Total spent</span>
+          <span className="home-summary-card-label">{hasTransactionFilter ? 'Filtered spent' : 'Total spent'}</span>
           <span
             className="home-summary-card-value"
             style={{ color: exceedsBudget ? 'var(--mezan-danger)' : 'var(--mezan-accent)' }}
@@ -920,7 +1240,9 @@ export default function Home() {
           </span>
         </div>
         <div className="home-summary-card">
-          <span className="home-summary-card-label">Budget remaining</span>
+          <span className="home-summary-card-label">
+            Budget remaining{hasTransactionFilter ? ' (all)' : ''}
+          </span>
           <span
             className="home-summary-card-value"
             style={{ color: totalRemaining >= 0 ? 'var(--mezan-success)' : 'var(--mezan-danger)' }}
@@ -983,6 +1305,11 @@ export default function Home() {
           expanded={spendingSummaryExpanded}
           onToggle={() => setSpendingSummaryExpanded((v) => !v)}
         >
+          {hasTransactionFilter && (
+            <p style={{ margin: '0 0 0.5rem 0', fontSize: '0.8rem', color: 'var(--mezan-text-muted)', fontStyle: 'italic' }}>
+              Based on all transactions in the period (not filtered).
+            </p>
+          )}
           {(() => {
             const sentences = spendingExplanation.explanation
               .split(/\.\s+(?=[A-Z])/)
@@ -1013,89 +1340,89 @@ export default function Home() {
           })()}
         </CollapsibleSection>
           )}
-          {id === 'insights' && insights && (insights.peak_time_of_day || insights.peak_day_of_month || insights.peak_day_of_week || insights.top_vendor || insights.top_category || insights.spending_trend || insights.largest_transaction) && (
+          {id === 'insights' && (displayInsights ?? insights) && ((displayInsights ?? insights).peak_time_of_day || (displayInsights ?? insights).peak_day_of_month || (displayInsights ?? insights).peak_day_of_week || (displayInsights ?? insights).top_vendor || (displayInsights ?? insights).top_category || (displayInsights ?? insights).spending_trend || (displayInsights ?? insights).largest_transaction) && (
         <CollapsibleSection
           title="Insights"
           expanded={insightsExpanded}
           onToggle={() => setInsightsExpanded((v) => !v)}
         >
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-            {insights.peak_time_of_day && (
+            {(displayInsights ?? insights).peak_time_of_day && (
               <div className="card" style={{ padding: '0.75rem 1rem', margin: 0, background: '#f8f9fa' }}>
                 <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--mezan-text-muted)' }}>
                   When do you usually spend more (time of day)?
                 </p>
                 <p style={{ margin: '0.35rem 0 0 0', fontWeight: 600 }}>
                   <InsightAnswer
-                    text={`Around ${hourLabel(insights.peak_time_of_day.hour)} (EGP ${formatAmount(insights.peak_time_of_day.amount, 0)} in that hour)`}
+                    text={`Around ${hourLabel((displayInsights ?? insights).peak_time_of_day!.hour)} (EGP ${formatAmount((displayInsights ?? insights).peak_time_of_day!.amount, 0)} in that hour)`}
                   />
                 </p>
               </div>
             )}
-            {insights.peak_day_of_month && (
+            {(displayInsights ?? insights).peak_day_of_month && (
               <div className="card" style={{ padding: '0.75rem 1rem', margin: 0, background: '#f8f9fa' }}>
                 <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--mezan-text-muted)' }}>
                   When do you usually spend more (day of month)?
                 </p>
                 <p style={{ margin: '0.35rem 0 0 0', fontWeight: 600 }}>
                   <InsightAnswer
-                    text={`Around day ${insights.peak_day_of_month.day} (EGP ${formatAmount(insights.peak_day_of_month.amount, 0)} on that day)`}
+                    text={`Around day ${(displayInsights ?? insights).peak_day_of_month!.day} (EGP ${formatAmount((displayInsights ?? insights).peak_day_of_month!.amount, 0)} on that day)`}
                   />
                 </p>
               </div>
             )}
-            {insights.peak_day_of_week && (
+            {(displayInsights ?? insights).peak_day_of_week && (
               <div className="card" style={{ padding: '0.75rem 1rem', margin: 0, background: '#f8f9fa' }}>
                 <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--mezan-text-muted)' }}>
                   Busiest day of week (by spend)?
                 </p>
                 <p style={{ margin: '0.35rem 0 0 0', fontWeight: 600 }}>
                   <InsightAnswer
-                    text={`${insights.peak_day_of_week.day_name} — EGP ${formatAmount(insights.peak_day_of_week.amount, 0)}`}
+                    text={`${(displayInsights ?? insights).peak_day_of_week!.day_name} — EGP ${formatAmount((displayInsights ?? insights).peak_day_of_week!.amount, 0)}`}
                   />
                 </p>
               </div>
             )}
-            {insights.top_vendor && (
+            {(displayInsights ?? insights).top_vendor && (
               <div className="card" style={{ padding: '0.75rem 1rem', margin: 0, background: '#f8f9fa' }}>
                 <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--mezan-text-muted)' }}>
                   What vendor is taking most of your money?
                 </p>
                 <p style={{ margin: '0.35rem 0 0 0', fontWeight: 600 }}>
-                  <InsightAnswer text={`${insights.top_vendor.name} — EGP ${formatAmount(insights.top_vendor.amount, 0)}`} />
+                  <InsightAnswer text={`${(displayInsights ?? insights).top_vendor!.name} — EGP ${formatAmount((displayInsights ?? insights).top_vendor!.amount, 0)}`} />
                 </p>
               </div>
             )}
-            {insights.top_category && (
+            {(displayInsights ?? insights).top_category && (
               <div className="card" style={{ padding: '0.75rem 1rem', margin: 0, background: '#f8f9fa' }}>
                 <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--mezan-text-muted)' }}>
                   What category is taking most of your spending?
                 </p>
                 <p style={{ margin: '0.35rem 0 0 0', fontWeight: 600 }}>
-                  <InsightAnswer text={`${insights.top_category.name} — EGP ${formatAmount(insights.top_category.amount, 0)}`} />
+                  <InsightAnswer text={`${(displayInsights ?? insights).top_category!.name} — EGP ${formatAmount((displayInsights ?? insights).top_category!.amount, 0)}`} />
                 </p>
               </div>
             )}
-            {insights.spending_trend && (
+            {(displayInsights ?? insights).spending_trend && (
               <div className="card" style={{ padding: '0.75rem 1rem', margin: 0, background: '#f8f9fa' }}>
                 <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--mezan-text-muted)' }}>
                   Spending trend vs previous period?
                 </p>
                 <p style={{ margin: '0.35rem 0 0 0', fontWeight: 600 }}>
                   <InsightAnswer
-                    text={`${insights.spending_trend.trend === 'up' ? 'Up' : insights.spending_trend.trend === 'down' ? 'Down' : 'Same'} ${insights.spending_trend.percent_change >= 0 ? '+' : ''}${insights.spending_trend.percent_change.toFixed(1)}% vs previous period`}
+                    text={`${(displayInsights ?? insights).spending_trend!.trend === 'up' ? 'Up' : (displayInsights ?? insights).spending_trend!.trend === 'down' ? 'Down' : 'Same'} ${(displayInsights ?? insights).spending_trend!.percent_change >= 0 ? '+' : ''}${(displayInsights ?? insights).spending_trend!.percent_change.toFixed(1)}% vs previous period`}
                   />
                 </p>
               </div>
             )}
-            {insights.largest_transaction && (
+            {(displayInsights ?? insights).largest_transaction && (
               <div className="card" style={{ padding: '0.75rem 1rem', margin: 0, background: '#f8f9fa' }}>
                 <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--mezan-text-muted)' }}>
                   Largest transaction?
                 </p>
                 <p style={{ margin: '0.35rem 0 0 0', fontWeight: 600 }}>
                   <InsightAnswer
-                    text={`EGP ${formatAmount(insights.largest_transaction.amount, 0)} — ${insights.largest_transaction.merchant} (${insights.largest_transaction.date})`}
+                    text={`EGP ${formatAmount((displayInsights ?? insights).largest_transaction!.amount, 0)} — ${(displayInsights ?? insights).largest_transaction!.merchant} (${(displayInsights ?? insights).largest_transaction!.date})`}
                   />
                 </p>
               </div>
@@ -1110,6 +1437,11 @@ export default function Home() {
           onToggle={() => setPredictionExpanded((v) => !v)}
         >
           <div>
+          {(quickFilter === 'uncategorized' || quickFilter === 'recurring') && (
+            <p style={{ margin: '0 0 0.5rem 0', fontSize: '0.8rem', color: 'var(--mezan-text-muted)', fontStyle: 'italic' }}>
+              Based on all transactions in the period (not filtered).
+            </p>
+          )}
           <p style={{ margin: '0.5rem 0 0 0', fontSize: '0.9rem', color: 'var(--mezan-text-muted)' }}>
             Given current spending, how much total spend is predicted by end of month?
           </p>
@@ -1298,16 +1630,16 @@ export default function Home() {
                   );
                 })}
                 <tr className="home-summary-total">
-                  <td className="home-summary-td-cat">Total</td>
-                  <td className="home-summary-td-num home-summary-td-budget">EGP {formatAmount(budgetByCategory.total_budget)}</td>
-                  <td className="home-summary-td-num home-summary-td-actual">EGP {formatAmount(budgetByCategory.total_actual)}</td>
-                  <td className={`home-summary-td-num home-summary-diff ${budgetByCategory.total_difference >= 0 ? 'home-summary-diff--ok' : 'home-summary-diff--over'}`}>
-                    EGP {formatAmount(budgetByCategory.total_difference)}
+                  <td className="home-summary-td-cat">Total{totalsForDisplay ? ' (over budget only)' : ''}</td>
+                  <td className="home-summary-td-num home-summary-td-budget">EGP {formatAmount(totalsForDisplay ? totalsForDisplay.budget : budgetByCategory.total_budget)}</td>
+                  <td className="home-summary-td-num home-summary-td-actual">EGP {formatAmount(totalsForDisplay ? totalsForDisplay.actual : budgetByCategory.total_actual)}</td>
+                  <td className={`home-summary-td-num home-summary-diff ${(totalsForDisplay ? totalsForDisplay.difference : budgetByCategory.total_difference) >= 0 ? 'home-summary-diff--ok' : 'home-summary-diff--over'}`}>
+                    EGP {formatAmount(totalsForDisplay ? totalsForDisplay.difference : budgetByCategory.total_difference)}
                   </td>
                   <td className="home-summary-td-progress">
-                    {budgetByCategory.total_budget > 0 && (() => {
-                      const totalBudgetVal = budgetByCategory.total_budget;
-                      const totalActual = budgetByCategory.total_actual;
+                    {(totalsForDisplay ? totalsForDisplay.budget : budgetByCategory.total_budget) > 0 && (() => {
+                      const totalBudgetVal = totalsForDisplay ? totalsForDisplay.budget : budgetByCategory.total_budget;
+                      const totalActual = totalsForDisplay ? totalsForDisplay.actual : budgetByCategory.total_actual;
                       const totalPctSpent = Math.min(100, (totalActual / totalBudgetVal) * 100);
                       const totalPctRemaining = Math.max(0, 100 - totalPctSpent);
                       const totalOver = totalActual > totalBudgetVal;
@@ -1339,11 +1671,18 @@ export default function Home() {
       </CollapsibleSection>
           )}
           {id === 'anomalies' && anomalies.length > 0 && (
-        <AnomaliesSection
-          anomalies={anomalies}
-          expanded={anomaliesExpanded}
-          onToggle={() => setAnomaliesExpanded((v) => !v)}
-        />
+        <>
+          {hasTransactionFilter && (
+            <p style={{ margin: '0 0 0.25rem 0', fontSize: '0.8rem', color: 'var(--mezan-text-muted)', fontStyle: 'italic' }}>
+              Anomalies are based on all transactions in the period (not filtered).
+            </p>
+          )}
+          <AnomaliesSection
+            anomalies={anomalies}
+            expanded={anomaliesExpanded}
+            onToggle={() => setAnomaliesExpanded((v) => !v)}
+          />
+        </>
           )}
           {id === 'recent-transactions' && (
       <CollapsibleSection
@@ -1356,13 +1695,26 @@ export default function Home() {
           <Link to="/transactions">View all</Link>
           <Link to="/add">Add</Link>
         </div>
-      {transactions.length === 0 ? (
+      {filteredTransactions.length === 0 ? (
         <div className="card">
-          <p className="home-empty-note">No transactions this month. <Link to="/add">Add one</Link> or <Link to="/sms">paste from SMS</Link>.</p>
+          <p className="home-empty-note">
+            {transactions.length === 0 ? (
+              <>No transactions this period. <Link to="/add">Add one</Link> or <Link to="/sms">paste from SMS</Link>.</>
+            ) : (
+              'No transactions match your search or filters.'
+            )}
+          </p>
+          {transactions.length > 0 && (
+            <p style={{ marginTop: '0.5rem', fontSize: '0.9rem' }}>
+              <button type="button" className="btn btn-secondary" onClick={() => { setSearchQuery(''); setQuickFilter(null); }}>
+                Clear search & filters
+              </button>
+            </p>
+          )}
         </div>
       ) : (
         <div className="home-transaction-day-groups">
-          {groupByDay(transactions.slice(0, 5)).map(({ date, items }) => (
+          {groupByDay(filteredTransactions.slice(0, 5)).map(({ date, items }) => (
             <div key={date} className="home-day-card">
               <header className="home-day-card-header">{formatDayLabel(date)}</header>
               <ul className="list home-transaction-list">
@@ -1387,9 +1739,11 @@ export default function Home() {
                           onClick={async () => {
                             if (!token) return;
                             setSaving(true);
+                            const copyForUndo: Transaction = { ...t, category_id: t.category_id ?? t.category?.id };
                             try {
                               await api(`/v1/transactions/${t.id}`, { method: 'DELETE', token });
                               setDeleteConfirmId(null);
+                              setDeletedForUndo(copyForUndo);
                               setRefreshCounter((c) => c + 1);
                             } catch (e) {
                               setError(e instanceof Error ? e.message : 'Delete failed');
@@ -1435,9 +1789,11 @@ export default function Home() {
           ))}
         </div>
       )}
-      {transactions.length > 5 && (
+      {(searchQuery.trim() || quickFilter ? filteredTransactions.length : transactions.length) > 5 && (
         <p style={{ marginTop: '0.5rem', fontSize: '0.9rem' }}>
-          <Link to="/transactions">View all {transactions.length} transactions →</Link>
+          <Link to="/transactions">
+            View all {searchQuery.trim() || quickFilter ? filteredTransactions.length : transactions.length} transactions →
+          </Link>
         </p>
       )}
       </CollapsibleSection>
@@ -1459,6 +1815,41 @@ export default function Home() {
           onError={setError}
           setSaving={setSaving}
         />
+      )}
+
+      {deletedForUndo && (
+        <div className="home-undo-toast" role="status" aria-live="polite">
+          <span>Transaction deleted.</span>
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={async () => {
+              if (!token || !deletedForUndo) return;
+              const payload = {
+                amount: deletedForUndo.amount,
+                currency: deletedForUndo.currency || 'EGP',
+                category_id: deletedForUndo.category_id || deletedForUndo.category?.id,
+                date: deletedForUndo.date.slice(0, 10),
+                time: deletedForUndo.time || undefined,
+                merchant: deletedForUndo.merchant || undefined,
+                tag_ids: deletedForUndo.tag_ids ?? [],
+                egp_value: deletedForUndo.egp_value ?? undefined,
+              };
+              setSaving(true);
+              try {
+                await api<Transaction>('/v1/transactions', { method: 'POST', token, body: payload });
+                setDeletedForUndo(null);
+                setRefreshCounter((c) => c + 1);
+              } catch (e) {
+                setError(e instanceof Error ? e.message : 'Undo failed');
+              } finally {
+                setSaving(false);
+              }
+            }}
+          >
+            Undo
+          </button>
+        </div>
       )}
     </>
   );

@@ -362,6 +362,16 @@ textarea.input {
 }
 
 /* Home page */
+.home-filtered-banner {
+  font-size: 0.85rem;
+  color: var(--mezan-text-muted);
+  background: var(--mezan-bg-elevated, #f5f5f5);
+  padding: 0.5rem 0.75rem;
+  border-radius: 6px;
+  margin-bottom: 1rem;
+  max-width: 100%;
+}
+
 .home-summary-cards {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
@@ -669,8 +679,122 @@ textarea.input {
   background: var(--mezan-main-bg);
   border-radius: var(--mezan-radius);
   padding: 3px;
-  margin-bottom: 1.25rem;
+  margin-bottom: 0.75rem;
   border: 1px solid var(--mezan-border);
+}
+
+.home-timerange-presets {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.home-timerange-presets-label {
+  font-size: 0.875rem;
+  color: var(--mezan-text-muted);
+}
+
+.home-timerange-preset {
+  padding: 0.35rem 0.65rem;
+  font-size: 0.85rem;
+  color: var(--mezan-accent);
+  background: transparent;
+  border: 1px solid var(--mezan-border);
+  border-radius: var(--mezan-radius);
+  cursor: pointer;
+}
+
+.home-timerange-preset:hover {
+  background: var(--mezan-main-bg);
+  border-color: var(--mezan-accent);
+}
+
+.home-search-and-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 1rem;
+  margin-bottom: 1.25rem;
+}
+
+.home-search-wrap {
+  flex: 1;
+  min-width: 200px;
+}
+
+.home-search-wrap .label {
+  display: block;
+  margin-bottom: 0.25rem;
+  font-size: 0.875rem;
+  color: var(--mezan-text-muted);
+}
+
+.home-search-input {
+  width: 100%;
+  max-width: 280px;
+}
+
+.home-quick-filters {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.home-quick-filters-label {
+  font-size: 0.875rem;
+  color: var(--mezan-text-muted);
+}
+
+.home-quick-filter-chip {
+  padding: 0.35rem 0.65rem;
+  font-size: 0.85rem;
+  color: var(--mezan-text);
+  background: var(--mezan-main-bg);
+  border: 1px solid var(--mezan-border);
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.home-quick-filter-chip:hover {
+  border-color: var(--mezan-accent);
+  color: var(--mezan-accent);
+}
+
+.home-quick-filter-chip--active {
+  background: var(--mezan-accent);
+  border-color: var(--mezan-accent);
+  color: #fff;
+}
+
+.home-quick-filter-chip--active:hover {
+  background: var(--mezan-accent);
+  border-color: var(--mezan-accent);
+  color: #fff;
+  opacity: 0.9;
+}
+
+.home-undo-toast {
+  position: fixed;
+  bottom: 1.5rem;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  background: var(--mezan-card-bg);
+  border-radius: var(--mezan-radius-card);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  z-index: 1000;
+  font-size: 0.9rem;
+}
+
+.home-undo-toast .btn {
+  padding: 0.25rem 0.6rem;
+  font-size: 0.85rem;
 }
 
 .home-timerange-segment {

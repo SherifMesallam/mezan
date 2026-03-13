@@ -410,12 +410,14 @@ function parseHour(timeStr: string): number {
 
 /**
  * GET /v1/insights/predict-end-of-month
- * Query: month (YYYY-MM). Returns optimistic (recurring-only projection) and worst-case (daily average) predictions.
+ * Query: month (YYYY-MM), q (optional search: merchant/category/tag). Returns predictions.
  */
 insightsRouter.get('/predict-end-of-month', async (req: AuthRequest, res) => {
   try {
     const userId = req.user!.userId;
     const month = (req.query.month as string)?.trim() || getCurrentCalendarMonth();
+    const qRaw = (req.query.q as string)?.trim() || '';
+    const q = qRaw.toLowerCase();
     if (!/^\d{4}-\d{2}$/.test(month)) {
       res.status(422).json({ error: 'month (YYYY-MM) is required' });
       return;
@@ -426,8 +428,20 @@ insightsRouter.get('/predict-end-of-month', async (req: AuthRequest, res) => {
     const endDate = new Date(end + 'T12:00:00Z');
     const currentDate = todayStr > end ? end : todayStr;
 
+    const where: { userId: string; date: { gte: string; lte: string }; OR?: Array<Record<string, unknown>> } = {
+      userId,
+      date: { gte: start, lte: currentDate },
+    };
+    if (q.length > 0) {
+      where.OR = [
+        { merchant: { contains: q, mode: 'insensitive' as const } },
+        { category: { name: { contains: q, mode: 'insensitive' as const } } },
+        { tags: { some: { tag: { name: { contains: q, mode: 'insensitive' as const } } } } },
+      ];
+    }
+
     const transactions = await prisma.transaction.findMany({
-      where: { userId, date: { gte: start, lte: currentDate } },
+      where,
       select: { amount: true, egpValue: true, date: true, merchant: true },
     });
     const spentSoFar = transactions.reduce((s, t) => s + effectiveAmount(t), 0);
