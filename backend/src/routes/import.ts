@@ -13,7 +13,7 @@ import {
 } from '../services/sheet-merge';
 import { extractTransactionsFromSMS } from '../services/sms-extract';
 import { extractTransactionsFromImage } from '../services/image-extract';
-import { transcribeAudio } from '../services/voice-transcribe';
+import { transcribeAudio, TRANSACTION_PROMPT } from '../services/voice-transcribe';
 import { getLearningTransactionsForUser } from './ingest';
 
 export const importRouter = Router();
@@ -413,8 +413,15 @@ importRouter.post('/voice-merge-preview', async (req: AuthRequest, res) => {
 
     const baseURL = process.env.OPENAI_BASE_URL?.trim() || undefined;
     const whisperBaseURL = process.env.OPENAI_WHISPER_BASE_URL?.trim() || undefined;
+    const transcribeModel = process.env.OPENAI_TRANSCRIBE_MODEL?.trim() || undefined;
     const transcribed = await transcribeAudio(
-      { apiKey, baseURL, whisperBaseURL },
+      {
+        apiKey,
+        baseURL,
+        whisperBaseURL,
+        model: transcribeModel,
+        prompt: TRANSACTION_PROMPT,
+      },
       audioBase64,
       mimeType
     );

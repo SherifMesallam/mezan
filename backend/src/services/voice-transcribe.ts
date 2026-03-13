@@ -1,9 +1,17 @@
 /**
- * Transcribe audio to text using OpenAI Whisper API.
- * Accepts base64-encoded audio; returns plain text.
+ * Transcribe audio to text using OpenAI Speech-to-Text API.
+ * Supports whisper-1 and gpt-4o transcribe models. See:
+ * https://developers.openai.com/api/docs/guides/speech-to-text/
  */
 
 const MAX_FILE_SIZE_BYTES = 24 * 1024 * 1024; // 24 MB (API limit 25 MB)
+
+/** Default: gpt-4o-mini-transcribe (higher quality, supports prompt). Use whisper-1 for legacy. */
+const DEFAULT_TRANSCRIBE_MODEL = 'gpt-4o-mini-transcribe';
+
+/** Hint so the model expects amounts, merchants, dates (improves accuracy for transaction phrases). */
+export const TRANSACTION_PROMPT =
+  'The following is a short voice note about a financial transaction: amount, currency, merchant name, and optional date. Transcribe exactly what is said.';
 
 function extensionFromMime(mimeType: string): string {
   const m = (mimeType || '').toLowerCase().split(';')[0].trim();
@@ -23,10 +31,14 @@ function extensionFromMime(mimeType: string): string {
 
 export interface TranscribeConfig {
   apiKey: string;
-  /** Base URL for chat/completions; may not support Whisper. */
+  /** Base URL for chat/completions; may not support transcriptions. */
   baseURL?: string;
-  /** Base URL for Whisper (e.g. https://api.openai.com). Use when baseURL is a proxy that 404s on /v1/audio/transcriptions. */
+  /** Base URL for /v1/audio/transcriptions (e.g. https://api.openai.com). Use when baseURL is a proxy that 404s. */
   whisperBaseURL?: string;
+  /** Model: whisper-1 | gpt-4o-mini-transcribe | gpt-4o-transcribe. Default gpt-4o-mini-transcribe. */
+  model?: string;
+  /** Optional prompt to improve accuracy (gpt-4o transcribe models; whisper-1 uses last 224 tokens). */
+  prompt?: string;
 }
 
 /**
@@ -59,7 +71,10 @@ export async function transcribeAudio(
   const formData = new FormData();
   const blob = new Blob([buffer], { type: mimeType });
   formData.append('file', blob, filename);
-  formData.append('model', 'whisper-1');
+  formData.append('model', config.model || DEFAULT_TRANSCRIBE_MODEL);
+  if (config.prompt && config.prompt.trim()) {
+    formData.append('prompt', config.prompt.trim());
+  }
 
   const response = await fetch(url, {
     method: 'POST',
@@ -71,7 +86,7 @@ export async function transcribeAudio(
 
   if (!response.ok) {
     const err = await response.text();
-    throw new Error(`Whisper API error ${response.status}: ${err}`);
+    throw new Error(`Transcription API error ${response.status}: ${err}`);
   }
 
   const data = (await response.json()) as { text?: string };
