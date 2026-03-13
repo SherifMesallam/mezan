@@ -3,6 +3,7 @@
  * Returns the same shape as SMS extract so the merge/match wizard can reuse the same flow.
  */
 import { normalizeDateToYYYYMMDD } from '../lib/date';
+import type { LearningExample } from './sms-extract';
 
 export interface ImageExtractConfig {
   apiKey: string;
@@ -24,11 +25,28 @@ const DEFAULT_BASE = 'https://api.openai.com/v1';
 const DEFAULT_MODEL = 'gpt-4o-mini';
 const MAX_COMPLETION_TOKENS = 4096;
 
-function buildPrompt(userCategoryNames: string[]): string {
+function buildPrompt(userCategoryNames: string[], learningExamples: LearningExample[] = []): string {
   const categoryHint =
     userCategoryNames.length > 0
       ? `The user has these categories: ${JSON.stringify(userCategoryNames)}. Prefer these names when a line fits (e.g. Groceries, Transport, Bills).`
       : 'Suggest a short category name (e.g. Groceries, Transport, Bills, Subscriptions, Other).';
+
+  let learningBlock = '';
+  if (learningExamples.length > 0) {
+    const examplesText = learningExamples
+      .slice(0, 80)
+      .map(
+        (ex) =>
+          `  merchant: ${ex.merchant ?? '(none)'}, category: ${ex.category}${(ex.tags?.length ?? 0) > 0 ? `, tags: [${(ex.tags ?? []).join(', ')}]` : ''}`
+      )
+      .join('\n');
+    learningBlock = `
+
+USER'S PAST CATEGORIZATIONS (priority over your own suggestion):
+The list below shows how this user categorized past transactions. When the receipt/image shows the SAME merchant or a very similar one (e.g. same brand, same venue), you MUST use that transaction's category. The user's choice has priority. Only suggest a different category when the merchant is clearly different from all entries below.
+${examplesText}
+`;
+  }
 
   return `Look at this image (receipt, bill, or transaction list). Extract every distinct financial transaction.
 The image may contain handwritten or printed Arabic text and Arabic-Indic numerals (٠١٢٣٤٥٦٧٨٩). Transcribe carefully:
@@ -45,7 +63,7 @@ Rules:
 - date: YYYY-MM-DD. If the receipt has only day/month (two numbers), use current year ${new Date().getFullYear()} and preserve the two numbers in a clear order (e.g. if you see ١١/٣ or 11/3, output a date with day and month; in MENA day/month is common so 11/3 often means 11 March).
 - time: 24h (HH:mm) if visible, else "00:00".
 - merchant: vendor/store name in the script used (Arabic or Latin); output as-is or transliterated so the user can recognise it.
-- suggested_category: ${categoryHint}
+- suggested_category: ${categoryHint}${learningBlock}
 - source_snippet: a short line from the image for this transaction (or a brief description) so the user can identify it.
 - If you see only ONE total (single transaction), return one object. If you see multiple line items, return one object per transaction.
 - Do not return an empty transactions array. If nothing looks like a transaction, return one object with the total amount and best guess for date/merchant.`;
@@ -92,7 +110,8 @@ export async function extractTransactionsFromImage(
   config: ImageExtractConfig,
   imageBase64: string,
   mimeType: string,
-  userCategoryNames: string[] = []
+  userCategoryNames: string[] = [],
+  learningExamples: LearningExample[] = []
 ): Promise<ExtractedImageTransaction[]> {
   const baseURL = (config.baseURL || DEFAULT_BASE).replace(/\/$/, '');
   const url = `data:${mimeType};base64,${imageBase64}`;
@@ -103,7 +122,7 @@ export async function extractTransactionsFromImage(
       {
         role: 'user',
         content: [
-          { type: 'text', text: buildPrompt(userCategoryNames) },
+          { type: 'text', text: buildPrompt(userCategoryNames, learningExamples) },
           { type: 'image_url', image_url: { url } },
         ],
       },

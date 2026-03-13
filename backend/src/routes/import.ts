@@ -40,7 +40,7 @@ importRouter.post('/sheet-merge-preview', async (req: AuthRequest, res) => {
       return;
     }
 
-    const [categories, transactions] = await Promise.all([
+    const [categories, transactions, learningExamples] = await Promise.all([
       prisma.category.findMany({
         where: { userId },
         select: { id: true, name: true },
@@ -52,6 +52,7 @@ importRouter.post('/sheet-merge-preview', async (req: AuthRequest, res) => {
         take: 2000,
         include: { category: { select: { name: true } } },
       }),
+      getLearningTransactionsForUser(userId),
     ]);
 
     const userCategoryNames = categories.map((c) => c.name.trim()).filter(Boolean);
@@ -62,7 +63,8 @@ importRouter.post('/sheet-merge-preview', async (req: AuthRequest, res) => {
         model: process.env.OPENAI_MODEL?.trim() || 'gpt-4o-mini',
       },
       sheetText,
-      userCategoryNames
+      userCategoryNames,
+      learningExamples
     );
 
     if (extracted.length === 0) {
@@ -414,7 +416,7 @@ importRouter.post('/image-merge-preview', async (req: AuthRequest, res) => {
       return;
     }
 
-    const [categories, existingTx] = await Promise.all([
+    const [categories, existingTx, learningExamples] = await Promise.all([
       prisma.category.findMany({
         where: { userId },
         select: { id: true, name: true },
@@ -426,6 +428,7 @@ importRouter.post('/image-merge-preview', async (req: AuthRequest, res) => {
         take: 2000,
         include: { category: { select: { name: true } } },
       }),
+      getLearningTransactionsForUser(userId),
     ]);
 
     const userCategoryNames = categories.map((c) => c.name.trim()).filter(Boolean);
@@ -437,7 +440,8 @@ importRouter.post('/image-merge-preview', async (req: AuthRequest, res) => {
       },
       imageBase64,
       mimeType,
-      userCategoryNames
+      userCategoryNames,
+      learningExamples
     );
 
     if (extracted.length === 0) {

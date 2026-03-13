@@ -3,6 +3,7 @@
  * and match them to existing transactions (amount tolerance, date, category similarity).
  */
 import { normalizeDateToYYYYMMDD } from '../lib/date';
+import type { LearningExample } from './sms-extract';
 
 export interface SheetMergeConfig {
   apiKey: string;
@@ -56,7 +57,8 @@ function normalizeCurrency(value: unknown): string {
 export async function extractTransactionsFromSheet(
   config: SheetMergeConfig,
   sheetText: string,
-  userCategoryNames: string[]
+  userCategoryNames: string[],
+  learningExamples: LearningExample[] = []
 ): Promise<ExtractedSheetRow[]> {
   const trimmed = (sheetText || '').trim();
   if (!trimmed) return [];
@@ -66,6 +68,23 @@ export async function extractTransactionsFromSheet(
       ? `The user has these categories: ${JSON.stringify(userCategoryNames)}. When the sheet has a category column, map values to the closest existing name when possible (e.g. "Food & Groceries" → "Groceries", "Medical" → "Healthcare").`
       : 'Infer short category names from the sheet (e.g. Food, Transport, Bills).';
 
+  let learningBlock = '';
+  if (learningExamples.length > 0) {
+    const examplesText = learningExamples
+      .slice(0, 80)
+      .map(
+        (ex) =>
+          `  merchant: ${ex.merchant ?? '(none)'}, category: ${ex.category}${(ex.tags?.length ?? 0) > 0 ? `, tags: [${(ex.tags ?? []).join(', ')}]` : ''}`
+      )
+      .join('\n');
+    learningBlock = `
+
+USER'S PAST CATEGORIZATIONS (priority over your own suggestion):
+When a row's merchant is the SAME or very similar to one below, you MUST use that transaction's category. The user's choice has priority. Only use a different category when the merchant is clearly different from all entries below.
+${examplesText}
+`;
+  }
+
   const currentYear = new Date().getFullYear();
   const systemPrompt = `You are a precise parser for spreadsheet/table data (CSV, tab-separated, or pasted table).
 
@@ -73,6 +92,7 @@ INPUT: The user will paste raw sheet content (columns might be: date, amount, ca
 
 OUTPUT: Reply with ONLY a valid JSON object, no other text:
 {"rows": [ {"amount": <number>, "currency": "<code>", "date": "YYYY-MM-DD", "category_name": "<string>", "merchant": "<string or null>", "raw_line": "<exact line(s) from the sheet input that this row was parsed from, copy verbatim>"}, ... ]}
+${learningBlock}
 
 Rules:
 - Parse every data row that contains an amount. Skip header rows and empty rows.

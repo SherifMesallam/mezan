@@ -262,14 +262,15 @@ async function getUserCategoryNames(userId: string): Promise<string[]> {
 }
 
 /**
- * Transactions that reflect user choices: manual entries, any with tags, or user-confirmed (edited category/tags).
- * Used as few-shot examples so the LLM learns how this user categorizes and tags.
+ * Transactions that reflect user choices: manual entries, with tags, user-confirmed, and recent by date.
+ * Used so the LLM can prefer the user's category when it sees a similar merchant (e.g. Echo Zone → Work Related).
+ * Dedupes by (merchant, category) so we keep one example per vendor→category. Cap at maxResults.
  */
-export async function getLearningTransactionsForUser(userId: string, limit: number = 25): Promise<LearningExample[]> {
+export async function getLearningTransactionsForUser(userId: string, maxResults: number = 100): Promise<LearningExample[]> {
   const manual = await prisma.transaction.findMany({
     where: { userId, source: 'manual' },
     orderBy: { createdAt: 'desc' },
-    take: limit,
+    take: 50,
     include: {
       category: { select: { name: true } },
       tags: { include: { tag: { select: { name: true } } } },
@@ -282,7 +283,7 @@ export async function getLearningTransactionsForUser(userId: string, limit: numb
       id: { notIn: manual.map((t) => t.id) },
     },
     orderBy: { createdAt: 'desc' },
-    take: limit,
+    take: 50,
     include: {
       category: { select: { name: true } },
       tags: { include: { tag: { select: { name: true } } } },
@@ -295,27 +296,44 @@ export async function getLearningTransactionsForUser(userId: string, limit: numb
       id: { notIn: [...manual, ...withTags].map((t) => t.id) },
     },
     orderBy: { userConfirmedAt: 'desc' },
-    take: limit,
+    take: 50,
     include: {
       category: { select: { name: true } },
       tags: { include: { tag: { select: { name: true } } } },
     },
   });
-  const seen = new Set<string>();
+  const dateFrom = new Date();
+  dateFrom.setDate(dateFrom.getDate() - 90);
+  const recentWithCategory = await prisma.transaction.findMany({
+    where: {
+      userId,
+      date: { gte: dateFrom.toISOString().slice(0, 10) },
+      merchant: { not: null },
+      categoryId: { not: null },
+      id: { notIn: [...manual, ...withTags, ...userConfirmed].map((t) => t.id) },
+    },
+    orderBy: { date: 'desc' },
+    take: 80,
+    include: {
+      category: { select: { name: true } },
+      tags: { include: { tag: { select: { name: true } } } },
+    },
+  });
+  const seenId = new Set<string>();
+  const seenMerchantCategory = new Set<string>();
   const out: LearningExample[] = [];
-  for (const t of [...manual, ...withTags, ...userConfirmed]) {
-    if (seen.has(t.id)) continue;
-    seen.add(t.id);
+  for (const t of [...manual, ...withTags, ...userConfirmed, ...recentWithCategory]) {
+    if (seenId.has(t.id)) continue;
+    seenId.add(t.id);
     const category = t.category?.name?.trim() || '';
+    if (!category) continue;
+    const merchant = t.merchant?.trim() || null;
+    const key = `${(merchant ?? '').toLowerCase()}|${category.toLowerCase()}`;
+    if (seenMerchantCategory.has(key)) continue;
+    seenMerchantCategory.add(key);
     const tags = (t.tags ?? []).map((tt) => tt.tag.name.trim()).filter(Boolean);
-    if (category) {
-      out.push({
-        merchant: t.merchant?.trim() || null,
-        category,
-        tags,
-      });
-    }
-    if (out.length >= limit) break;
+    out.push({ merchant, category, tags });
+    if (out.length >= maxResults) break;
   }
   return out;
 }

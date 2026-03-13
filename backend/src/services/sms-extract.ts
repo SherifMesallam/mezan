@@ -62,7 +62,7 @@ function buildSystemPrompt(
   let learningBlock = '';
   if (learningExamples.length > 0) {
     const examplesText = learningExamples
-      .slice(0, 25)
+      .slice(0, 80)
       .map(
         (ex) =>
           `  merchant: ${ex.merchant ?? '(none)'}, category: ${ex.category}${ex.tags.length > 0 ? `, tags: [${ex.tags.join(', ')}]` : ''}`
@@ -70,8 +70,8 @@ function buildSystemPrompt(
       .join('\n');
     learningBlock = `
 
-LEARN FROM THIS USER'S PAST CHOICES (use these to match similar vendors and categories):
-The following are transactions this user manually categorized or tagged. When the new SMS mentions a similar vendor or pattern, prefer the same category (and consider similar tags if you see a tags field in the output later).
+USER'S PAST CATEGORIZATIONS (priority over your own suggestion):
+The list below shows how this user categorized past transactions. When the new SMS mentions the SAME merchant or a very similar one (e.g. same brand, same venue name, obvious variant), you MUST use that transaction's category. The user's choice has priority over your suggestion. Only suggest a different category when the merchant is clearly different from all entries below.
 ${examplesText}
 `;
   }
