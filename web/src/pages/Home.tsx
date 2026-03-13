@@ -1,4 +1,17 @@
 import { useState, useEffect, useMemo, Children, isValidElement, cloneElement, type ReactElement } from 'react';
+
+function useMediaQuery(query: string): boolean {
+  const [matches, setMatches] = useState(() =>
+    typeof window !== 'undefined' ? window.matchMedia(query).matches : false
+  );
+  useEffect(() => {
+    const m = window.matchMedia(query);
+    const handler = () => setMatches(m.matches);
+    m.addEventListener('change', handler);
+    return () => m.removeEventListener('change', handler);
+  }, [query]);
+  return matches;
+}
 import { Link, useLocation } from 'react-router-dom';
 import { api } from '../api';
 import { getStoredToken } from '../App';
@@ -114,10 +127,12 @@ function DraggableSection({
   id,
   onReorder,
   children,
+  allowReorder = true,
 }: {
   id: string;
   onReorder: (fromId: string, toId: string) => void;
   children: React.ReactNode;
+  allowReorder?: boolean;
 }) {
   const [isDragOver, setIsDragOver] = useState(false);
 
@@ -141,7 +156,7 @@ function DraggableSection({
     if (fromId && fromId !== id) onReorder(fromId, id);
   }
 
-  const dragProps = { onDragStart: handleDragStart };
+  const dragProps = allowReorder ? { onDragStart: handleDragStart } : undefined;
   const childrenArray = Children.toArray(children);
   const child = childrenArray.find((c): c is ReactElement => isValidElement(c)) as (ReactElement & { props: { dragProps?: typeof dragProps } }) | undefined;
   const childWithDrag = child ? cloneElement(child, { dragProps }) : children;
@@ -149,9 +164,9 @@ function DraggableSection({
   return (
     <div
       className={`home-draggable-section ${isDragOver ? 'home-draggable-section--drag-over' : ''}`}
-      onDragOver={handleDragOver}
-      onDragLeave={handleDragLeave}
-      onDrop={handleDrop}
+      onDragOver={allowReorder ? handleDragOver : undefined}
+      onDragLeave={allowReorder ? handleDragLeave : undefined}
+      onDrop={allowReorder ? handleDrop : undefined}
     >
       {childWithDrag}
     </div>
@@ -663,6 +678,7 @@ export default function Home() {
   const [summarySortKey, setSummarySortKey] = useState<SummarySortKey | null>(null);
   const [summarySortDir, setSummarySortDir] = useState<'asc' | 'desc'>('asc');
   const [sectionOrder, setSectionOrder] = useState<string[]>(loadSectionOrder);
+  const isDesktop = useMediaQuery('(min-width: 768px)');
 
   useEffect(() => {
     try {
@@ -1214,7 +1230,8 @@ export default function Home() {
         </p>
       )}
 
-      {/* Summary cards */}
+      {/* Summary cards – at top when no spending summary, or on mobile when we have spending summary (no row) */}
+      {(!spendingExplanation?.explanation || !isDesktop) && (
       <div className={`home-summary-cards ${prediction && !hideBudgetRemaining && !useCustomDateRange ? 'home-summary-cards--three' : ''}`}>
         <div className="home-summary-card">
           <span className="home-summary-card-label">{hasTransactionFilter ? 'Filtered spent' : 'Total spent'}</span>
@@ -1282,63 +1299,125 @@ export default function Home() {
           </div>
         )}
       </div>
+      )}
 
       {error && <p className="error">{error}</p>}
 
-      {orderedVisibleSectionIds.map((id) => (
-        <DraggableSection key={id} id={id} onReorder={handleSectionReorder}>
-          {id === 'spending-summary' && spendingExplanation?.explanation && (
-        <CollapsibleSection
-          title="Spending summary"
-          expanded={spendingSummaryExpanded}
-          onToggle={() => setSpendingSummaryExpanded((v) => !v)}
-        >
-          {hasTransactionFilter && (
-            <p style={{ margin: '0 0 0.5rem 0', fontSize: '0.8rem', color: 'var(--mezan-text-muted)', fontStyle: 'italic' }}>
-              Based on all transactions in the period (not filtered).
-            </p>
-          )}
-          {(() => {
-            const sentences = spendingExplanation.explanation
-              .split(/\.\s+(?=[A-Z])/)
-              .map((s: string) => s.trim())
-              .filter(Boolean);
-            const categoryNames = spendingExplanation.category_names ?? [];
-            const merchantNames = spendingExplanation.merchant_names ?? [];
-            const content =
-              sentences.length > 0
-                ? sentences.map((sentence: string, i: number) => {
-                    const text = sentence.endsWith('.') || /[!?]$/.test(sentence) ? sentence : `${sentence}.`;
-                    return (
-                      <div key={i} className="home-spending-summary-card">
-                        <SpendingSummaryText text={text} categoryNames={categoryNames} merchantNames={merchantNames} />
-                      </div>
-                    );
-                  })
-                : (
-                  <div className="home-spending-summary-card">
-                    <SpendingSummaryText
-                      text={spendingExplanation.explanation}
-                      categoryNames={categoryNames}
-                      merchantNames={merchantNames}
-                    />
+      {(() => {
+        const showSpendingSummary = !!spendingExplanation?.explanation;
+        const showPredictionsInsights = (() => {
+          const ins = displayInsights ?? insights;
+          const hasApiInsights = !!(ins?.peak_time_of_day || ins?.peak_day_of_month || ins?.peak_day_of_week || ins?.top_vendor || ins?.top_category || ins?.spending_trend || ins?.largest_transaction);
+          const list = hasTransactionFilter ? filteredTransactions : transactions;
+          return (!!prediction && !useCustomDateRange) || hasApiInsights || list.length > 0;
+        })();
+        const summaryCardsContent = (
+          <div className={`home-summary-cards home-summary-cards--stacked ${prediction && !hideBudgetRemaining && !useCustomDateRange ? 'home-summary-cards--three' : ''}`}>
+            <div className="home-summary-card">
+              <span className="home-summary-card-label">{hasTransactionFilter ? 'Filtered spent' : 'Total spent'}</span>
+              <span
+                className="home-summary-card-value"
+                style={{ color: exceedsBudget ? 'var(--mezan-danger)' : 'var(--mezan-accent)' }}
+              >
+                EGP {formatAmount(totalSpent)}
+              </span>
+            </div>
+            {!hideBudgetRemaining && (
+            <div className="home-summary-card">
+              <span className="home-summary-card-label">
+                Budget remaining{hasTransactionFilter ? ' (filtered)' : ''}
+              </span>
+              <span
+                className="home-summary-card-value"
+                style={{ color: filteredBudgetRemaining >= 0 ? 'var(--mezan-success)' : 'var(--mezan-danger)' }}
+              >
+                EGP {formatAmount(filteredBudgetRemaining)}
+              </span>
+            </div>
+            )}
+            {prediction && !useCustomDateRange && (
+              <div className="home-summary-card home-summary-card--predictions">
+                <span className="home-summary-card-label">Predictions</span>
+                <p className="home-predictions-intro">
+                  End-of-month estimate. Click a tile for details.
+                </p>
+                <div className="home-predictions-inner">
+                  <button
+                    type="button"
+                    className="home-predictions-tile home-predictions-tile--optimistic"
+                    onClick={() => scrollToPrediction('prediction-optimistic')}
+                    aria-label="Scroll to Optimistic prediction"
+                  >
+                    <span className="home-predictions-tile-label">Optimistic</span>
+                    <span className="home-predictions-tile-value" style={{ color: 'var(--mezan-accent)' }}>
+                      EGP {formatAmount(prediction.optimistic_predicted_total, 0)}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    className="home-predictions-tile home-predictions-tile--more-likely"
+                    onClick={() => scrollToPrediction('prediction-more-likely')}
+                    aria-label="Scroll to More likely prediction"
+                  >
+                    <span className="home-predictions-tile-label">More likely</span>
+                    <span className="home-predictions-tile-value" style={{ color: 'var(--mezan-budget-col)' }}>
+                      EGP {formatAmount(prediction.more_likely_predicted_total, 0)}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    className="home-predictions-tile home-predictions-tile--worst-case"
+                    onClick={() => scrollToPrediction('prediction-worst-case')}
+                    aria-label="Scroll to Worst case prediction"
+                  >
+                    <span className="home-predictions-tile-label">Worst case</span>
+                    <span className="home-predictions-tile-value" style={{ color: 'var(--mezan-danger)' }}>
+                      EGP {formatAmount(prediction.worst_case_predicted_total, 0)}
+                    </span>
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        );
+        const spendingSummaryContent = showSpendingSummary ? (
+          <CollapsibleSection
+            title="Spending summary"
+            expanded={spendingSummaryExpanded}
+            onToggle={() => setSpendingSummaryExpanded((v) => !v)}
+          >
+            {hasTransactionFilter && (
+              <p style={{ margin: '0 0 0.5rem 0', fontSize: '0.8rem', color: 'var(--mezan-text-muted)', fontStyle: 'italic' }}>
+                Based on all transactions in the period (not filtered).
+              </p>
+            )}
+            <div className="home-spending-summary-list">
+              {(() => {
+                const sentences = spendingExplanation!.explanation
+                  .split(/\.\s+(?=[A-Z])/)
+                  .map((s: string) => s.trim())
+                  .filter(Boolean);
+                const categoryNames = spendingExplanation!.category_names ?? [];
+                const merchantNames = spendingExplanation!.merchant_names ?? [];
+                const content =
+                  sentences.length > 0
+                    ? sentences.map((s) => (s.endsWith('.') || /[!?]$/.test(s) ? s : `${s}.`))
+                    : [spendingExplanation!.explanation];
+                return content.map((text, i) => (
+                  <div key={i} className="home-spending-summary-card">
+                    <SpendingSummaryText text={text} categoryNames={categoryNames} merchantNames={merchantNames} />
                   </div>
-                );
-            return <div className="home-spending-summary-list">{content}</div>;
-          })()}
-        </CollapsibleSection>
-          )}
-          {id === 'predictions-insights' && (() => {
-            const ins = displayInsights ?? insights;
-            const hasApiInsights = !!(ins?.peak_time_of_day || ins?.peak_day_of_month || ins?.peak_day_of_week || ins?.top_vendor || ins?.top_category || ins?.spending_trend || ins?.largest_transaction);
-            const list = hasTransactionFilter ? filteredTransactions : transactions;
-            return (!!prediction && !useCustomDateRange) || hasApiInsights || list.length > 0;
-          })() && (
-        <CollapsibleSection
-          title="Predictions & insights"
-          expanded={predictionsInsightsExpanded}
-          onToggle={() => setPredictionsInsightsExpanded((v) => !v)}
-        >
+                ));
+              })()}
+            </div>
+          </CollapsibleSection>
+        ) : null;
+        const predictionsInsightsContent = showPredictionsInsights ? (
+          <CollapsibleSection
+            title="Predictions & insights"
+            expanded={predictionsInsightsExpanded}
+            onToggle={() => setPredictionsInsightsExpanded((v) => !v)}
+          >
           <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
             {prediction && !useCustomDateRange && (
               <div>
@@ -1446,8 +1525,25 @@ export default function Home() {
             })()}
           </div>
         </CollapsibleSection>
-          )}
-          {id === 'summary-by-category' && (
+        ) : null;
+        const firstRowSectionId = orderedVisibleSectionIds.find((sid) => sid === 'spending-summary');
+        return (
+          <>
+            {orderedVisibleSectionIds.map((id) => {
+              if (isDesktop && showSpendingSummary && id === firstRowSectionId) {
+                return (
+                  <div key="summary-stats-row" className="home-summary-stats-row">
+                    <div className="home-summary-stats-col">{summaryCardsContent}</div>
+                    <div className="home-summary-stats-col">{spendingSummaryContent}</div>
+                  </div>
+                );
+              }
+              if (isDesktop && showSpendingSummary && id === 'spending-summary') return null;
+              return (
+                <DraggableSection key={id} id={id} onReorder={handleSectionReorder} allowReorder={isDesktop}>
+                  {id === 'spending-summary' && spendingSummaryContent}
+                  {id === 'predictions-insights' && predictionsInsightsContent}
+                  {id === 'summary-by-category' && (
       <CollapsibleSection
         title={useCustomDateRange ? `Spending by category (${useAllTime ? 'All time' : quickFilter ? { today: 'Today', yesterday: 'Yesterday', this_week: 'This week', previous_week: 'Previous week', previous_month: 'Previous month' }[quickFilter] : `${formatShortDate(dateFrom)} – ${formatShortDate(dateTo)}`})` : 'Summary by Category'}
         expanded={summaryByCategoryExpanded}
@@ -1726,7 +1822,11 @@ export default function Home() {
       </CollapsibleSection>
           )}
         </DraggableSection>
-      ))}
+      );
+            })}
+          </>
+        );
+      })()}
 
       {editingTransaction && (
         <EditTransactionModal

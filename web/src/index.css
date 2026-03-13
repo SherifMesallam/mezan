@@ -524,7 +524,31 @@ textarea.input {
   line-height: 1.2;
 }
 
-/* Spending summary – one card per sentence, readable typography */
+/* Spending summary + stats row – summary on left, Total spent/Budget/Predictions stacked on right */
+.home-summary-stats-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5rem;
+  align-items: start;
+}
+
+@media (max-width: 768px) {
+  .home-summary-stats-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+.home-summary-stats-col {
+  min-width: 0;
+}
+
+.home-summary-cards--stacked {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 0;
+}
+
+/* Spending summary – one card per sentence, original style */
 .home-spending-summary-list {
   display: flex;
   flex-direction: column;
@@ -532,12 +556,12 @@ textarea.input {
 }
 
 .home-spending-summary-card {
-  font-size: 1.05rem;
+  font-size: 0.8rem;
   line-height: 1.6;
   color: var(--mezan-text);
   background: var(--mezan-card-bg);
   border-radius: var(--mezan-radius, 8px);
-  padding: 1rem 1.25rem;
+  padding: 0.5rem 1.25rem;
   border: 1px solid var(--mezan-border);
   box-shadow: var(--mezan-card-shadow);
   font-family: var(--mezan-font-sans, system-ui, -apple-system, sans-serif);
