@@ -9,6 +9,7 @@ import 'categories_screen.dart';
 import 'tags_screen.dart';
 import 'charts_screen.dart';
 import 'add_from_image_screen.dart';
+import 'add_from_voice_screen.dart';
 import 'merge_from_sheet_screen.dart';
 import 'budgets_screen.dart';
 import 'settings_screen.dart';
@@ -594,6 +595,15 @@ class _HomeScreenState extends State<HomeScreen> {
               MaterialPageRoute(builder: (_) => const AddFromSmsScreen()),
             ).then((_) => _load()),
             child: const Icon(Icons.sms),
+          ),
+          const SizedBox(height: 8),
+          FloatingActionButton.small(
+            heroTag: 'voice',
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const AddFromVoiceScreen()),
+            ).then((_) => _load()),
+            child: const Icon(Icons.mic),
           ),
           const SizedBox(height: 8),
           FloatingActionButton(

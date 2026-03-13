@@ -13,6 +13,7 @@ import {
 } from '../services/sheet-merge';
 import { extractTransactionsFromSMS } from '../services/sms-extract';
 import { extractTransactionsFromImage } from '../services/image-extract';
+import { transcribeAudio } from '../services/voice-transcribe';
 import { getLearningTransactionsForUser } from './ingest';
 
 export const importRouter = Router();
@@ -381,6 +382,235 @@ importRouter.post('/sms-merge-preview', async (req: AuthRequest, res) => {
     const message = e instanceof Error ? e.message : String(e);
     res.status(500).json({
       error: message || 'Failed to parse or match SMS',
+      details: e instanceof Error ? e.stack : undefined,
+    });
+  }
+});
+
+/**
+ * POST /v1/import/voice-merge-preview
+ * Body: { audio_base64: string, mime_type?: string } (e.g. audio/webm, audio/mp4)
+ * Transcribes with Whisper, extracts transactions (with learning data), defaults missing date to today, matches like SMS.
+ * Returns same items shape as sms-merge-preview for the match wizard.
+ */
+importRouter.post('/voice-merge-preview', async (req: AuthRequest, res) => {
+  try {
+    const userId = req.user!.userId;
+    const audioBase64 = typeof req.body?.audio_base64 === 'string' ? req.body.audio_base64.trim() : '';
+    const mimeType = typeof req.body?.mime_type === 'string' ? req.body.mime_type.trim() : 'audio/webm';
+    if (!audioBase64) {
+      res.status(422).json({ error: 'audio_base64 is required' });
+      return;
+    }
+
+    const apiKey = process.env.OPENAI_API_KEY?.trim();
+    if (!apiKey) {
+      res.status(501).json({
+        error: 'AI not configured. Set OPENAI_API_KEY in backend .env.',
+      });
+      return;
+    }
+
+    const baseURL = process.env.OPENAI_BASE_URL?.trim() || undefined;
+    const transcribed = await transcribeAudio({ apiKey, baseURL }, audioBase64, mimeType);
+    const rawText = transcribed.trim();
+    if (!rawText) {
+      res.json({ items: [] });
+      return;
+    }
+
+    const [categories, existingTx, learningExamples] = await Promise.all([
+      prisma.category.findMany({
+        where: { userId },
+        select: { id: true, name: true },
+        orderBy: { sortOrder: 'asc' },
+      }),
+      prisma.transaction.findMany({
+        where: { userId },
+        orderBy: [{ date: 'desc' }, { createdAt: 'desc' }],
+        take: 2000,
+        include: { category: { select: { name: true } } },
+      }),
+      getLearningTransactionsForUser(userId),
+    ]);
+
+    const userCategoryNames = categories.map((c) => c.name.trim()).filter(Boolean);
+    let extracted = await extractTransactionsFromSMS(
+      {
+        apiKey,
+        baseURL: baseURL || undefined,
+        model: process.env.OPENAI_MODEL?.trim() || 'gpt-4o-mini',
+      },
+      rawText,
+      { userCategoryNames, learningExamples }
+    );
+
+    const todayIso = new Date().toISOString().slice(0, 10);
+    extracted = extracted.map((ext) => {
+      const normalized = normalizeDateToYYYYMMDD(ext.date);
+      if (!normalized) {
+        return { ...ext, date: todayIso };
+      }
+      return ext;
+    });
+
+    const logPrefix = '[VOICE-MERGE]';
+    console.log(`${logPrefix} Transcribed (${rawText.length} chars):`, rawText.slice(0, 200));
+    console.log(`${logPrefix} AI extracted ${extracted.length} transaction(s)`);
+
+    if (extracted.length === 0) {
+      res.json({ items: [] });
+      return;
+    }
+
+    function toAmountNum(t: { amount: unknown }): number {
+      const v = t.amount;
+      if (typeof v === 'number' && !Number.isNaN(v)) return v;
+      if (v != null && typeof (v as { toNumber?: () => number }).toNumber === 'function') {
+        return (v as { toNumber: () => number }).toNumber();
+      }
+      return Number(v);
+    }
+
+    const categoryNameToId = new Map<string, string>();
+    const categoryIdToName = new Map<string, string>();
+    const categoryNamesLower: { id: string; nameLower: string }[] = [];
+    for (const c of categories) {
+      const key = c.name.trim().toLowerCase();
+      if (key) {
+        categoryNameToId.set(key, c.id);
+        categoryIdToName.set(c.id, c.name);
+        categoryNamesLower.push({ id: c.id, nameLower: key });
+      }
+    }
+
+    function resolveCategoryId(suggested: string): string | null {
+      const s = suggested.trim().toLowerCase();
+      if (!s) return null;
+      const exact = categoryNameToId.get(s);
+      if (exact) return exact;
+      for (const { id, nameLower } of categoryNamesLower) {
+        if (nameLower.includes(s) || s.includes(nameLower)) return id;
+      }
+      return null;
+    }
+
+    function dateAddDays(dateStr: string, days: number): string {
+      const [y, m, d] = dateStr.split('-').map(Number);
+      const dt = new Date(y, m - 1, d);
+      dt.setDate(dt.getDate() + days);
+      return dt.toISOString().slice(0, 10);
+    }
+
+    function trySwapDayMonth(iso: string): string | null {
+      const parts = iso.split('-').map(Number);
+      if (parts.length !== 3) return null;
+      const [y, m, d] = parts;
+      if (m <= 12 && d <= 12 && m !== d) {
+        return `${y}-${String(d).padStart(2, '0')}-${String(m).padStart(2, '0')}`;
+      }
+      return null;
+    }
+
+    const expected_months: number[] = [];
+
+    const items = extracted.map((ext, i) => {
+      const dateNorm = normalizeDateToYYYYMMDD(ext.date, expected_months.length > 0 ? expected_months : undefined);
+      if (!dateNorm) {
+        return {
+          sheet_index: i,
+          amount: ext.amount,
+          currency: ext.currency ?? 'EGP',
+          date: ext.date,
+          time: ext.time,
+          category_name: ext.suggested_category ?? 'Other',
+          merchant: ext.merchant,
+          source_snippet: ext.source_snippet ?? null,
+          matched_entry_id: null,
+          matched_entry: null,
+        };
+      }
+      const suggestedCat = ext.suggested_category ?? '';
+      const resolvedCategoryId = resolveCategoryId(suggestedCat);
+      const amountLo = ext.amount - 30;
+      const amountHi = ext.amount + 30;
+      const extCurrency = (ext.currency && String(ext.currency).trim().toUpperCase().slice(0, 3)) || 'EGP';
+
+      function sameCurrency(t: { currency: string }): boolean {
+        const c = (t.currency && String(t.currency).trim().toUpperCase().slice(0, 3)) || 'EGP';
+        return c === extCurrency;
+      }
+
+      function candidatesForDateRange(dateFrom: string, dateTo: string, requireCategory: boolean) {
+        return existingTx.filter((t) => {
+          const amt = toAmountNum(t);
+          const amountOk = amt >= amountLo && amt <= amountHi;
+          const dateOk = t.date >= dateFrom && t.date <= dateTo;
+          const currencyOk = sameCurrency(t);
+          const categoryOk = !requireCategory || t.categoryId === resolvedCategoryId;
+          return currencyOk && amountOk && dateOk && categoryOk;
+        });
+      }
+
+      let dateFrom = dateAddDays(dateNorm, -2);
+      let dateTo = dateAddDays(dateNorm, 2);
+      let candidates = candidatesForDateRange(dateFrom, dateTo, true);
+      let dateUsed = dateNorm;
+
+      if (candidates.length === 0) {
+        candidates = candidatesForDateRange(dateFrom, dateTo, false);
+      }
+      if (candidates.length === 0) {
+        const swapped = trySwapDayMonth(dateNorm);
+        if (swapped) {
+          const dateFromSwap = dateAddDays(swapped, -2);
+          const dateToSwap = dateAddDays(swapped, 2);
+          let candidatesSwap = candidatesForDateRange(dateFromSwap, dateToSwap, true);
+          if (candidatesSwap.length === 0) candidatesSwap = candidatesForDateRange(dateFromSwap, dateToSwap, false);
+          if (candidatesSwap.length > 0) {
+            candidates = candidatesSwap;
+            dateUsed = swapped;
+          }
+        }
+      }
+
+      const best =
+        candidates.length === 0
+          ? null
+          : candidates.reduce((a, b) =>
+              Math.abs(toAmountNum(a) - ext.amount) <= Math.abs(toAmountNum(b) - ext.amount) ? a : b
+            );
+
+      const matched_entry = best
+        ? {
+            id: best.id,
+            amount: toAmountNum(best),
+            date: best.date,
+            category_name: best.category?.name?.trim() ?? '',
+            merchant: best.merchant,
+          }
+        : null;
+
+      return {
+        sheet_index: i,
+        amount: ext.amount,
+        currency: ext.currency ?? 'EGP',
+        date: dateUsed,
+        time: ext.time,
+        category_name: ext.suggested_category ?? 'Other',
+        merchant: ext.merchant,
+        source_snippet: ext.source_snippet ?? null,
+        matched_entry_id: best?.id ?? null,
+        matched_entry,
+      };
+    });
+
+    res.json({ items });
+  } catch (e) {
+    console.error(e);
+    const message = e instanceof Error ? e.message : String(e);
+    res.status(500).json({
+      error: message || 'Failed to transcribe or parse voice',
       details: e instanceof Error ? e.stack : undefined,
     });
   }
@@ -760,6 +990,163 @@ importRouter.post('/sms-merge-confirm', async (req: AuthRequest, res) => {
     const message = e instanceof Error ? e.message : String(e);
     res.status(500).json({
       error: message || 'Failed to create transactions from SMS',
+      details: e instanceof Error ? e.stack : undefined,
+    });
+  }
+});
+
+/**
+ * POST /v1/import/voice-merge-confirm
+ * Same body as sms-merge-confirm; creates transactions with source: 'voice'.
+ */
+importRouter.post('/voice-merge-confirm', async (req: AuthRequest, res) => {
+  try {
+    const userId = req.user!.userId;
+    const items = req.body?.items;
+    if (!Array.isArray(items) || items.length === 0) {
+      res.status(422).json({ error: 'items array is required' });
+      return;
+    }
+
+    const toCreate = items.filter((x: { action?: string }) => x.action === 'add_new') as Array<{
+      sheet_index: number;
+      action: string;
+      amount?: number;
+      currency?: string;
+      date?: string;
+      time?: string;
+      merchant?: string | null;
+      suggested_category?: string | null;
+      category_name?: string | null;
+      category_id?: string | null;
+      tag_ids?: string[];
+    }>;
+    const toTagMatched = items.filter(
+      (x: { action?: string; matched_entry_id?: string; tag_ids?: string[] }) =>
+        x.action === 'skip' && x.matched_entry_id && Array.isArray(x.tag_ids) && x.tag_ids.length > 0
+    ) as Array<{ matched_entry_id: string; tag_ids: string[] }>;
+
+    const validTagIds = await prisma.tag.findMany({
+      where: { userId },
+      select: { id: true },
+    });
+    const validTagIdSet = new Set(validTagIds.map((t) => t.id));
+
+    const created: { id: string; amount: number; currency: string; date: string; time: string; merchant: string | null }[] = [];
+    let skipped = 0;
+    const region = await getRegionForUser(userId);
+
+    for (const row of toCreate) {
+      const amount = Number(row.amount);
+      const dateNorm = normalizeDateToYYYYMMDD(row.date);
+      if (Number.isNaN(amount) || !dateNorm) continue;
+
+      const merchantNorm =
+        row.merchant != null && String(row.merchant).trim() !== ''
+          ? String(row.merchant).trim().slice(0, 200)
+          : null;
+
+      const existing = await prisma.transaction.findFirst({
+        where: { userId, amount, date: dateNorm, merchant: merchantNorm },
+      });
+      if (existing) {
+        skipped += 1;
+        continue;
+      }
+
+      let categoryId: string | null = null;
+      if (row.category_id && typeof row.category_id === 'string') {
+        const cat = await prisma.category.findFirst({
+          where: { id: row.category_id, userId },
+          select: { id: true },
+        });
+        if (cat) categoryId = cat.id;
+      }
+      if (!categoryId) {
+        const categoryName = (row.suggested_category ?? row.category_name ?? '') && String(row.suggested_category ?? row.category_name).trim();
+        categoryId = await findCategoryIdByName(userId, categoryName);
+        if (!categoryId && categoryName) {
+          categoryId = await findOrCreateCategoryByName(userId, categoryName.slice(0, 80));
+        }
+        if (!categoryId) {
+          categoryId = await suggestCategory(userId, merchantNorm ?? '', null, region);
+        }
+        if (!categoryId) {
+          categoryId = await getFirstCategoryId(userId);
+        }
+        if (!categoryId) {
+          await ensureDefaultCategories(userId);
+          categoryId = await getFirstCategoryId(userId);
+        }
+      }
+      if (!categoryId) continue;
+
+      const currencyRaw = row.currency != null ? String(row.currency).trim().toUpperCase().slice(0, 3) : '';
+      const currency = currencyRaw && /^[A-Z]{3}$/.test(currencyRaw) ? currencyRaw : 'EGP';
+      const timeStr = row.time != null ? String(row.time).trim().slice(0, 20) : null;
+      const tagIds = Array.isArray(row.tag_ids) ? row.tag_ids.filter((id) => validTagIdSet.has(id)) : [];
+      let egpVal: Decimal | null = null;
+      if (currency !== 'EGP') {
+        const converted = await amountToEgp(currency, amount);
+        if (converted != null) egpVal = new Decimal(converted);
+      }
+
+      const transaction = await prisma.transaction.create({
+        data: {
+          userId,
+          amount,
+          currency,
+          egpValue: egpVal ?? undefined,
+          categoryId,
+          date: dateNorm,
+          time: timeStr,
+          merchant: merchantNorm,
+          source: 'voice',
+          tags: tagIds.length > 0 ? { create: tagIds.map((tagId) => ({ tagId })) } : undefined,
+        },
+      });
+
+      created.push({
+        id: transaction.id,
+        amount: Number(transaction.amount),
+        currency: transaction.currency,
+        date: transaction.date,
+        time: transaction.time ?? '',
+        merchant: transaction.merchant,
+      });
+    }
+
+    for (const item of toTagMatched) {
+      const tagIds = item.tag_ids.filter((id) => validTagIdSet.has(id));
+      if (tagIds.length === 0) continue;
+      const tx = await prisma.transaction.findFirst({
+        where: { id: item.matched_entry_id, userId },
+        include: { tags: { select: { tagId: true } } },
+      });
+      if (!tx) continue;
+      const existingTagIds = tx.tags.map((t) => t.tagId);
+      const merged = [...new Set([...existingTagIds, ...tagIds])];
+      await prisma.transactionTag.deleteMany({ where: { transactionId: tx.id } });
+      if (merged.length > 0) {
+        await prisma.transactionTag.createMany({
+          data: merged.map((tagId) => ({ transactionId: tx.id, tagId })),
+          skipDuplicates: true,
+        });
+      }
+    }
+
+    const discarded = items.filter((x: { action?: string }) => x.action === 'discard').length;
+    res.json({
+      created,
+      count: created.length,
+      skipped,
+      discarded,
+    });
+  } catch (e) {
+    console.error(e);
+    const message = e instanceof Error ? e.message : String(e);
+    res.status(500).json({
+      error: message || 'Failed to create transactions from voice',
       details: e instanceof Error ? e.stack : undefined,
     });
   }
