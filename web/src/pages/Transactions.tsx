@@ -31,6 +31,26 @@ function monthRange(month: string): [string, string] {
   return [start, end];
 }
 
+function groupByDay<T extends { date: string }>(
+  items: T[],
+  dateOrder: 'desc' | 'asc' = 'desc'
+): { date: string; items: T[] }[] {
+  const byDay = new Map<string, T[]>();
+  for (const t of items) {
+    const d = t.date.slice(0, 10);
+    if (!byDay.has(d)) byDay.set(d, []);
+    byDay.get(d)!.push(t);
+  }
+  const groups = Array.from(byDay.entries()).map(([date, items]) => ({ date, items }));
+  groups.sort((a, b) => (dateOrder === 'desc' ? b.date.localeCompare(a.date) : a.date.localeCompare(b.date)));
+  return groups;
+}
+
+function formatDayHeader(dateStr: string): string {
+  const d = new Date(dateStr + 'T12:00:00');
+  return d.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+}
+
 function EditTransactionModal({
   transaction,
   categories,
@@ -292,6 +312,11 @@ export default function Transactions() {
     return list;
   }, [transactions, searchQuery, sortBy, sortOrder]);
 
+  const groupedByDay = useMemo(
+    () => groupByDay(filteredAndSorted, sortBy === 'date' && sortOrder === 'asc' ? 'asc' : 'desc'),
+    [filteredAndSorted, sortBy, sortOrder]
+  );
+
   function toggleSort(field: SortBy) {
     if (sortBy === field) {
       setSortOrder((o) => (o === 'asc' ? 'desc' : 'asc'));
@@ -479,139 +504,149 @@ export default function Transactions() {
           )}
         </div>
       ) : (
-        <div className="tx-list-card">
-          <div className="tx-table-wrap">
-            <table className="tx-table">
-              <thead>
-                <tr>
-                  <th
-                    className="tx-th-sortable"
-                    onClick={() => toggleSort('date')}
-                    title="Sort by date"
-                  >
-                    Date <SortIcon column="date" />
-                  </th>
-                  <th
-                    className="tx-th-sortable"
-                    onClick={() => toggleSort('merchant')}
-                    title="Sort by merchant"
-                  >
-                    Merchant <SortIcon column="merchant" />
-                  </th>
-                  <th
-                    className="tx-th-sortable"
-                    onClick={() => toggleSort('category')}
-                    title="Sort by category"
-                  >
-                    Category <SortIcon column="category" />
-                  </th>
-                  <th
-                    className="tx-th-sortable"
-                    style={{ textAlign: 'right' }}
-                    onClick={() => toggleSort('amount')}
-                    title="Sort by amount"
-                  >
-                    Amount <SortIcon column="amount" />
-                  </th>
-                  <th style={{ width: 1 }}>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredAndSorted.length === 0 ? (
-                  <tr>
-                    <td colSpan={5} style={{ textAlign: 'center', padding: '2rem', color: 'var(--mezan-text-muted)' }}>
-                      No transactions match your search.
-                    </td>
-                  </tr>
-                ) : (
-                  filteredAndSorted.map((t) => (
-                    <tr key={t.id}>
-                      <td className="tx-td-date">
-                        {t.date}{t.time ? ` · ${t.time}` : ''}
-                      </td>
-                      <td>
-                        <span className="tx-td-merchant">{t.merchant || '—'}</span>
-                        {(t.tags ?? []).length > 0 && (
-                          <div className="tx-pills" style={{ marginTop: '0.35rem' }}>
-                            {(t.tags ?? []).map((tag) => (
-                              <span key={tag.id} className="tx-pill tx-pill--tag">{tag.name}</span>
-                            ))}
-                          </div>
-                        )}
-                      </td>
-                      <td>
-                        {t.category ? (
-                          <span className="tx-pill tx-pill--cat">{t.category.name}</span>
-                        ) : (
-                          '—'
-                        )}
-                      </td>
-                      <td className="tx-td-amount">
-                        {t.amount.toFixed(2)} {t.currency}
-                        {t.currency !== 'EGP' && t.egp_value != null && (
-                          <span className="tx-td-amount-egp">
-                            ≈ {Number(t.egp_value).toLocaleString(undefined, { minimumFractionDigits: 2 })} EGP
-                          </span>
-                        )}
-                      </td>
-                      <td className="tx-td-actions">
-                        {deleteConfirmId === t.id ? (
-                          <>
-                            <span style={{ fontSize: '0.85rem', color: 'var(--mezan-text-muted)', marginRight: '0.25rem' }}>Delete?</span>
-                            <button
-                              type="button"
-                              className="tx-btn-icon tx-btn-icon--danger"
-                              onClick={async () => {
-                                if (!token) return;
-                                setSaving(true);
-                                try {
-                                  await api(`/v1/transactions/${t.id}`, { method: 'DELETE', token });
-                                  setDeleteConfirmId(null);
-                                  setRefreshCounter((c) => c + 1);
-                                } catch (e) {
-                                  setError(e instanceof Error ? e.message : 'Delete failed');
-                                } finally {
-                                  setSaving(false);
-                                }
-                              }}
-                            >
-                              Yes
-                            </button>
-                            <button
-                              type="button"
-                              className="tx-btn-icon"
-                              onClick={() => setDeleteConfirmId(null)}
-                            >
-                              No
-                            </button>
-                          </>
-                        ) : (
-                          <>
-                            <button
-                              type="button"
-                              className="tx-btn-icon"
-                              onClick={() => setEditingTransaction(t)}
-                              title="Edit"
-                            >
-                              Edit
-                            </button>
-                            <button
-                              type="button"
-                              className="tx-btn-icon tx-btn-icon--danger"
-                              onClick={() => setDeleteConfirmId(t.id)}
-                              title="Delete"
-                            >
-                              Delete
-                            </button>
-                          </>
-                        )}
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
+        <div className="tx-day-groups">
+          {filteredAndSorted.length === 0 ? (
+            <div className="tx-list-card">
+              <p style={{ textAlign: 'center', padding: '2rem', margin: 0, color: 'var(--mezan-text-muted)' }}>
+                No transactions match your search.
+              </p>
+            </div>
+          ) : (
+            groupedByDay.map(({ date, items }) => (
+              <div key={date} className="tx-day-card">
+                <header className="tx-day-card-header">
+                  <span className="tx-day-card-title">{formatDayHeader(date)}</span>
+                  <span className="tx-day-card-count">
+                    {items.length} {items.length === 1 ? 'transaction' : 'transactions'}
+                  </span>
+                </header>
+                <div className="tx-table-wrap">
+                  <table className="tx-table">
+                    <thead>
+                      <tr>
+                        <th
+                          className="tx-th-sortable"
+                          onClick={() => toggleSort('date')}
+                          title="Sort by date"
+                        >
+                          Date <SortIcon column="date" />
+                        </th>
+                        <th
+                          className="tx-th-sortable"
+                          onClick={() => toggleSort('merchant')}
+                          title="Sort by merchant"
+                        >
+                          Merchant <SortIcon column="merchant" />
+                        </th>
+                        <th
+                          className="tx-th-sortable"
+                          onClick={() => toggleSort('category')}
+                          title="Sort by category"
+                        >
+                          Category <SortIcon column="category" />
+                        </th>
+                        <th
+                          className="tx-th-sortable"
+                          style={{ textAlign: 'right' }}
+                          onClick={() => toggleSort('amount')}
+                          title="Sort by amount"
+                        >
+                          Amount <SortIcon column="amount" />
+                        </th>
+                        <th style={{ width: 1 }}>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {items.map((t) => (
+                        <tr key={t.id}>
+                          <td className="tx-td-date">
+                            {t.date}{t.time ? ` · ${t.time}` : ''}
+                          </td>
+                          <td>
+                            <span className="tx-td-merchant">{t.merchant || '—'}</span>
+                            {(t.tags ?? []).length > 0 && (
+                              <div className="tx-pills" style={{ marginTop: '0.35rem' }}>
+                                {(t.tags ?? []).map((tag) => (
+                                  <span key={tag.id} className="tx-pill tx-pill--tag">{tag.name}</span>
+                                ))}
+                              </div>
+                            )}
+                          </td>
+                          <td>
+                            {t.category ? (
+                              <span className="tx-pill tx-pill--cat">{t.category.name}</span>
+                            ) : (
+                              '—'
+                            )}
+                          </td>
+                          <td className="tx-td-amount">
+                            {t.amount.toFixed(2)} {t.currency}
+                            {t.currency !== 'EGP' && t.egp_value != null && (
+                              <span className="tx-td-amount-egp">
+                                ≈ {Number(t.egp_value).toLocaleString(undefined, { minimumFractionDigits: 2 })} EGP
+                              </span>
+                            )}
+                          </td>
+                          <td className="tx-td-actions">
+                            {deleteConfirmId === t.id ? (
+                              <>
+                                <span style={{ fontSize: '0.85rem', color: 'var(--mezan-text-muted)', marginRight: '0.25rem' }}>Delete?</span>
+                                <button
+                                  type="button"
+                                  className="tx-btn-icon tx-btn-icon--danger"
+                                  onClick={async () => {
+                                    if (!token) return;
+                                    setSaving(true);
+                                    try {
+                                      await api(`/v1/transactions/${t.id}`, { method: 'DELETE', token });
+                                      setDeleteConfirmId(null);
+                                      setRefreshCounter((c) => c + 1);
+                                    } catch (e) {
+                                      setError(e instanceof Error ? e.message : 'Delete failed');
+                                    } finally {
+                                      setSaving(false);
+                                    }
+                                  }}
+                                >
+                                  Yes
+                                </button>
+                                <button
+                                  type="button"
+                                  className="tx-btn-icon"
+                                  onClick={() => setDeleteConfirmId(null)}
+                                >
+                                  No
+                                </button>
+                              </>
+                            ) : (
+                              <>
+                                <button
+                                  type="button"
+                                  className="tx-btn-icon"
+                                  onClick={() => setEditingTransaction(t)}
+                                  title="Edit"
+                                >
+                                  Edit
+                                </button>
+                                <button
+                                  type="button"
+                                  className="tx-btn-icon tx-btn-icon--danger"
+                                  onClick={() => setDeleteConfirmId(t.id)}
+                                  title="Delete"
+                                >
+                                  Delete
+                                </button>
+                              </>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ))
+          )}
         </div>
       )}
 

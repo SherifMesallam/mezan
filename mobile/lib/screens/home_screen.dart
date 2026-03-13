@@ -95,6 +95,12 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _timeFilterExpanded = false;
   bool _fabExpanded = false;
   bool _anomaliesExpanded = false;
+  bool _spendingSummaryExpanded = true;
+  bool _insightsExpanded = true;
+  bool _predictionExpanded = true;
+  bool _whereMoneyExpanded = true;
+  bool _summaryByCategoryExpanded = true;
+  bool _recentTransactionsExpanded = true;
 
   @override
   void initState() {
@@ -373,59 +379,71 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                     if (_spendingExplanation != null && (_spendingExplanation!['explanation'] as String?)?.isNotEmpty == true) ...[
                       const SizedBox(height: 20),
-                      Text('Spending summary', style: Theme.of(context).textTheme.titleMedium),
-                      const SizedBox(height: 8),
-                      _SpendingSummarySection(explanation: _spendingExplanation!),
+                      _CollapsibleSection(
+                        title: 'Spending summary',
+                        expanded: _spendingSummaryExpanded,
+                        onToggle: () => setState(() => _spendingSummaryExpanded = !_spendingSummaryExpanded),
+                        child: _SpendingSummarySection(explanation: _spendingExplanation!),
+                      ),
                     ],
                     if (_summaryItems.isNotEmpty) ...[
                       const SizedBox(height: 20),
-                      Text('Insights', style: Theme.of(context).textTheme.titleMedium),
-                      const SizedBox(height: 8),
-                      _InsightsSection(insights: _insights),
+                      _CollapsibleSection(
+                        title: 'Insights',
+                        expanded: _insightsExpanded,
+                        onToggle: () => setState(() => _insightsExpanded = !_insightsExpanded),
+                        child: _InsightsSection(insights: _insights),
+                      ),
                     ],
                     if (_prediction != null) ...[
                       const SizedBox(height: 20),
-                      Text('Prediction', style: Theme.of(context).textTheme.titleMedium),
-                      const SizedBox(height: 8),
-                      _PredictionSection(prediction: _prediction!),
+                      _CollapsibleSection(
+                        title: 'Prediction',
+                        expanded: _predictionExpanded,
+                        onToggle: () => setState(() => _predictionExpanded = !_predictionExpanded),
+                        child: _PredictionSection(prediction: _prediction!),
+                      ),
                     ],
                     if (_summaryItems.isNotEmpty) ...[
                       const SizedBox(height: 20),
-                      Text(
-                        'Where your money is going',
-                        style: Theme.of(context).textTheme.titleSmall,
+                      _CollapsibleSection(
+                        title: 'Where your money is going',
+                        expanded: _whereMoneyExpanded,
+                        onToggle: () => setState(() => _whereMoneyExpanded = !_whereMoneyExpanded),
+                        child: _SpendingByCategoryWaffle(summaryItems: _summaryItems),
                       ),
-                      const SizedBox(height: 8),
-                      _SpendingByCategoryWaffle(summaryItems: _summaryItems),
                       const SizedBox(height: 20),
-                      Text('Summary by category', style: Theme.of(context).textTheme.titleMedium),
-                      const SizedBox(height: 8),
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          ..._summaryItems.map((r) {
-                            final budget = (r['budget'] as num?)?.toDouble() ?? 0;
-                            final actual = (r['actual'] as num?)?.toDouble() ?? 0;
-                            final diff = (r['difference'] as num?)?.toDouble() ?? (budget - actual);
-                            final pct = budget > 0 ? (actual / budget).clamp(0.0, 1.0) : 0.0;
-                            return _SummaryCategoryCard(
-                              name: (r['category_name'] as String?) ?? '—',
-                              budget: budget,
-                              actual: actual,
-                              diff: diff,
-                              progress: pct,
-                              isTotal: false,
-                            );
-                          }),
-                          _SummaryCategoryCard(
-                            name: 'Total',
-                            budget: _totalBudget,
-                            actual: _monthTotal,
-                            diff: _totalBudget - _monthTotal,
-                            progress: _totalBudget > 0 ? (_monthTotal / _totalBudget).clamp(0.0, 1.0) : 0,
-                            isTotal: true,
-                          ),
-                        ],
+                      _CollapsibleSection(
+                        title: 'Summary by category',
+                        expanded: _summaryByCategoryExpanded,
+                        onToggle: () => setState(() => _summaryByCategoryExpanded = !_summaryByCategoryExpanded),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            ..._summaryItems.map((r) {
+                              final budget = (r['budget'] as num?)?.toDouble() ?? 0;
+                              final actual = (r['actual'] as num?)?.toDouble() ?? 0;
+                              final diff = (r['difference'] as num?)?.toDouble() ?? (budget - actual);
+                              final pct = budget > 0 ? (actual / budget).clamp(0.0, 1.0) : 0.0;
+                              return _SummaryCategoryCard(
+                                name: (r['category_name'] as String?) ?? '—',
+                                budget: budget,
+                                actual: actual,
+                                diff: diff,
+                                progress: pct,
+                                isTotal: false,
+                              );
+                            }),
+                            _SummaryCategoryCard(
+                              name: 'Total',
+                              budget: _totalBudget,
+                              actual: _monthTotal,
+                              diff: _totalBudget - _monthTotal,
+                              progress: _totalBudget > 0 ? (_monthTotal / _totalBudget).clamp(0.0, 1.0) : 0,
+                              isTotal: true,
+                            ),
+                          ],
+                        ),
                       ),
                     ],
                     if (_anomalies != null && _anomalies!.isNotEmpty) ...[
@@ -436,62 +454,70 @@ class _HomeScreenState extends State<HomeScreen> {
                         onToggle: () => setState(() => _anomaliesExpanded = !_anomaliesExpanded),
                       ),
                     ],
-                    const SizedBox(height: 16),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text('Recent transactions', style: Theme.of(context).textTheme.titleMedium),
-                        TextButton(
-                          onPressed: () => Navigator.push(
-                            context,
-                            MaterialPageRoute(builder: (_) => const TransactionsScreen()),
-                          ).then((_) => _load()),
-                          child: const Text('View all'),
-                        ),
-                      ],
+                    const SizedBox(height: 20),
+                    _CollapsibleSection(
+                      title: 'Recent transactions',
+                      subtitle: 'Tap to expand',
+                      expanded: _recentTransactionsExpanded,
+                      onToggle: () => setState(() => _recentTransactionsExpanded = !_recentTransactionsExpanded),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Align(
+                            alignment: Alignment.centerRight,
+                            child: TextButton(
+                              onPressed: () => Navigator.push(
+                                context,
+                                MaterialPageRoute(builder: (_) => const TransactionsScreen()),
+                              ).then((_) => _load()),
+                              child: const Text('View all'),
+                            ),
+                          ),
+                          if (_transactions.isEmpty)
+                            const Padding(
+                              padding: EdgeInsets.all(24),
+                              child: Center(child: Text('No transactions yet. Add one below.')),
+                            )
+                          else
+                            ..._transactions.take(10).map((t) {
+                              final amt = (t['amount'] as num?)?.toDouble() ?? 0;
+                              final currency = (t['currency'] as String?)?.trim().toUpperCase() ?? 'EGP';
+                              final egpVal = t['egp_value'] as num?;
+                              final cat = t['category'] as Map?;
+                              final name = cat?['name'] ?? '—';
+                              return ListTile(
+                                leading: CircleAvatar(
+                                  child: Text(name.isNotEmpty ? name[0].toUpperCase() : '?'),
+                                ),
+                                title: Text(t['merchant']?.toString() ?? name),
+                                subtitle: Text(t['date']?.toString() ?? ''),
+                                trailing: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  crossAxisAlignment: CrossAxisAlignment.end,
+                                  children: [
+                                    Text(
+                                      '${amt.toStringAsFixed(2)} $currency',
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.w600,
+                                        color: Theme.of(context).colorScheme.primary,
+                                      ),
+                                    ),
+                                    if (currency != 'EGP' && egpVal != null) ...[
+                                      const SizedBox(height: 2),
+                                      Text(
+                                        '≈ ${egpVal.toStringAsFixed(2)} EGP',
+                                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                                        ),
+                                      ),
+                                    ],
+                                  ],
+                                ),
+                              );
+                            }),
+                        ],
+                      ),
                     ),
-                    if (_transactions.isEmpty)
-                      const Padding(
-                        padding: EdgeInsets.all(24),
-                        child: Center(child: Text('No transactions yet. Add one below.')),
-                      )
-                    else
-                      ..._transactions.take(10).map((t) {
-                        final amt = (t['amount'] as num?)?.toDouble() ?? 0;
-                        final currency = (t['currency'] as String?)?.trim().toUpperCase() ?? 'EGP';
-                        final egpVal = t['egp_value'] as num?;
-                        final cat = t['category'] as Map?;
-                        final name = cat?['name'] ?? '—';
-                        return ListTile(
-                          leading: CircleAvatar(
-                            child: Text(name.isNotEmpty ? name[0].toUpperCase() : '?'),
-                          ),
-                          title: Text(t['merchant']?.toString() ?? name),
-                          subtitle: Text(t['date']?.toString() ?? ''),
-                          trailing: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            crossAxisAlignment: CrossAxisAlignment.end,
-                            children: [
-                              Text(
-                                '${amt.toStringAsFixed(2)} $currency',
-                                style: TextStyle(
-                                  fontWeight: FontWeight.w600,
-                                  color: Theme.of(context).colorScheme.primary,
-                                ),
-                              ),
-                              if (currency != 'EGP' && egpVal != null) ...[
-                                const SizedBox(height: 2),
-                                Text(
-                                  '≈ ${egpVal.toStringAsFixed(2)} EGP',
-                                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                    color: Theme.of(context).colorScheme.onSurfaceVariant,
-                                  ),
-                                ),
-                              ],
-                            ],
-                          ),
-                        );
-                      }),
                   ],
                 ),
               ),
@@ -977,6 +1003,81 @@ class _SpendingSummarySection extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: children,
         ),
+      ),
+    );
+  }
+}
+
+/// Generic collapsible section: title + optional subtitle in header, child when expanded.
+class _CollapsibleSection extends StatelessWidget {
+  const _CollapsibleSection({
+    required this.title,
+    this.subtitle,
+    required this.expanded,
+    required this.onToggle,
+    required this.child,
+  });
+
+  final String title;
+  final String? subtitle;
+  final bool expanded;
+  final VoidCallback onToggle;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Card(
+      color: theme.colorScheme.surface,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          InkWell(
+            onTap: onToggle,
+            borderRadius: BorderRadius.circular(12),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(title, style: theme.textTheme.titleMedium),
+                        if (subtitle != null) ...[
+                          const SizedBox(height: 2),
+                          Text(
+                            subtitle!,
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: theme.colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  AnimatedRotation(
+                    turns: expanded ? 0.5 : 0,
+                    duration: const Duration(milliseconds: 200),
+                    child: Icon(
+                      Icons.expand_more,
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (expanded) ...[
+            const Divider(height: 1),
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: child,
+            ),
+          ],
+        ],
       ),
     );
   }
