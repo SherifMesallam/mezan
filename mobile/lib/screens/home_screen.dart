@@ -681,65 +681,68 @@ class _InsightsSection extends StatelessWidget {
         topVendor != null || topCategory != null || spendingTrend != null || largestTx != null;
     if (!hasAny) return const SizedBox.shrink();
 
-    final spacer = const SizedBox(height: 10);
-    var needSpacer = false;
-    Widget wrapSpacer(Widget child) {
-      final out = needSpacer ? Column(children: [spacer, child]) : child;
-      needSpacer = true;
-      return out;
-    }
-
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            if (peakTime != null)
-              wrapSpacer(_InsightRow(
-                question: 'When do you usually spend more (time of day)?',
-                answer: 'Around ${_hourLabel(peakTime['hour'] as int? ?? 12)} (EGP ${(peakTime['amount'] as num?)?.toStringAsFixed(0) ?? '0'} in that hour)',
-                theme: theme,
-              )),
-            if (peakDay != null)
-              wrapSpacer(_InsightRow(
-                question: 'When do you usually spend more (day of month)?',
-                answer: 'Around day ${peakDay['day']} (EGP ${(peakDay['amount'] as num?)?.toStringAsFixed(0) ?? '0'} on that day)',
-                theme: theme,
-              )),
-            if (peakDayOfWeek != null)
-              wrapSpacer(_InsightRow(
-                question: 'Busiest day of week (by spend)?',
-                answer: '${peakDayOfWeek['day_name'] ?? '—'} — EGP ${(peakDayOfWeek['amount'] as num?)?.toStringAsFixed(0) ?? '0'}',
-                theme: theme,
-              )),
-            if (topVendor != null)
-              wrapSpacer(_InsightRow(
-                question: 'What vendor is taking most of your money?',
-                answer: '${topVendor['name'] ?? '—'} — EGP ${(topVendor['amount'] as num?)?.toStringAsFixed(0) ?? '0'}',
-                theme: theme,
-              )),
-            if (topCategory != null)
-              wrapSpacer(_InsightRow(
-                question: 'What category is taking most of your spending?',
-                answer: '${topCategory['name'] ?? '—'} — EGP ${(topCategory['amount'] as num?)?.toStringAsFixed(0) ?? '0'}',
-                theme: theme,
-              )),
-            if (spendingTrend != null)
-              wrapSpacer(_InsightRow(
-                question: 'Spending trend vs previous period?',
-                answer: _trendAnswer(spendingTrend),
-                theme: theme,
-              )),
-            if (largestTx != null)
-              wrapSpacer(_InsightRow(
-                question: 'Largest transaction?',
-                answer: 'EGP ${(largestTx['amount'] as num?)?.toStringAsFixed(0) ?? '0'} — ${largestTx['merchant'] ?? '—'} (${largestTx['date'] ?? ''})',
-                theme: theme,
-              )),
-          ],
+    final cards = <Widget>[];
+    void addCard(Widget row) {
+      cards.add(
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            child: row,
+          ),
         ),
-      ),
+      );
+    }
+    if (peakTime != null)
+      addCard(_InsightRow(
+        question: 'When do you usually spend more (time of day)?',
+        answer: 'Around ${_hourLabel(peakTime['hour'] as int? ?? 12)} (EGP ${(peakTime['amount'] as num?)?.toStringAsFixed(0) ?? '0'} in that hour)',
+        theme: theme,
+      ));
+    if (peakDay != null)
+      addCard(_InsightRow(
+        question: 'When do you usually spend more (day of month)?',
+        answer: 'Around day ${peakDay['day']} (EGP ${(peakDay['amount'] as num?)?.toStringAsFixed(0) ?? '0'} on that day)',
+        theme: theme,
+      ));
+    if (peakDayOfWeek != null)
+      addCard(_InsightRow(
+        question: 'Busiest day of week (by spend)?',
+        answer: '${peakDayOfWeek['day_name'] ?? '—'} — EGP ${(peakDayOfWeek['amount'] as num?)?.toStringAsFixed(0) ?? '0'}',
+        theme: theme,
+      ));
+    if (topVendor != null)
+      addCard(_InsightRow(
+        question: 'What vendor is taking most of your money?',
+        answer: '${topVendor['name'] ?? '—'} — EGP ${(topVendor['amount'] as num?)?.toStringAsFixed(0) ?? '0'}',
+        theme: theme,
+      ));
+    if (topCategory != null)
+      addCard(_InsightRow(
+        question: 'What category is taking most of your spending?',
+        answer: '${topCategory['name'] ?? '—'} — EGP ${(topCategory['amount'] as num?)?.toStringAsFixed(0) ?? '0'}',
+        theme: theme,
+      ));
+    if (spendingTrend != null)
+      addCard(_InsightRow(
+        question: 'Spending trend vs previous period?',
+        answer: _trendAnswer(spendingTrend),
+        theme: theme,
+      ));
+    if (largestTx != null)
+      addCard(_InsightRow(
+        question: 'Largest transaction?',
+        answer: 'EGP ${(largestTx['amount'] as num?)?.toStringAsFixed(0) ?? '0'} — ${largestTx['merchant'] ?? '—'} (${largestTx['date'] ?? ''})',
+        theme: theme,
+      ));
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (int i = 0; i < cards.length; i++) ...[
+          if (i > 0) const SizedBox(height: 8),
+          cards[i],
+        ],
+      ],
     );
   }
 
@@ -813,11 +816,14 @@ class _InsightRow extends StatelessWidget {
   }
 }
 
-/// Prediction: optimistic (recurring-based) and worst-case (daily rate) end-of-month totals.
+/// Prediction: intro card + one card per type (Optimistic, More likely, Worst case).
 class _PredictionSection extends StatelessWidget {
   const _PredictionSection({required this.prediction});
 
   final Map<String, dynamic> prediction;
+
+  static const _cardPadding = EdgeInsets.symmetric(horizontal: 14, vertical: 12);
+  static const _cardSpacing = 8.0;
 
   @override
   Widget build(BuildContext context) {
@@ -825,8 +831,10 @@ class _PredictionSection extends StatelessWidget {
     final spent = (prediction['spent_so_far'] as num?)?.toDouble();
     final daysRemaining = prediction['days_remaining'] as int?;
     final optimisticTotal = (prediction['optimistic_predicted_total'] as num?)?.toDouble();
+    final moreLikelyTotal = (prediction['more_likely_predicted_total'] as num?)?.toDouble();
     final worstCaseTotal = (prediction['worst_case_predicted_total'] as num?)?.toDouble();
     final optimisticText = prediction['optimistic_text'] as String? ?? '';
+    final moreLikelyText = prediction['more_likely_text'] as String? ?? '';
     final worstCaseText = prediction['worst_case_text'] as String? ?? '';
 
     final labelStyle = theme.textTheme.labelMedium?.copyWith(
@@ -845,29 +853,30 @@ class _PredictionSection extends StatelessWidget {
       color: theme.colorScheme.onSurfaceVariant,
     );
 
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text(
-              'Given current spending, how much total spend is predicted by end of month?',
-              style: labelStyle,
-            ),
-            const SizedBox(height: 12),
-            if (spent != null || daysRemaining != null)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 12),
-                child: Text.rich(
+    final children = <Widget>[];
+
+    // Intro card: question + spent so far
+    children.add(
+      Card(
+        child: Padding(
+          padding: _cardPadding,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                'Given current spending, how much total spend is predicted by end of month?',
+                style: labelStyle,
+                maxLines: 3,
+                overflow: TextOverflow.visible,
+              ),
+              if (spent != null || daysRemaining != null) ...[
+                const SizedBox(height: 10),
+                Text.rich(
                   TextSpan(
                     style: subtitleStyle,
                     children: [
                       if (spent != null)
-                        TextSpan(
-                          text: 'Spent so far: ',
-                          style: subtitleStyle,
-                        ),
+                        TextSpan(text: 'Spent so far: ', style: subtitleStyle),
                       if (spent != null)
                         TextSpan(
                           text: 'EGP ${spent.toStringAsFixed(0)}',
@@ -883,38 +892,103 @@ class _PredictionSection extends StatelessWidget {
                     ],
                   ),
                 ),
-              ),
-            if (optimisticTotal != null) ...[
-              Text('Optimistic prediction', style: labelStyle),
-              const SizedBox(height: 4),
-              Text(
-                'EGP ${optimisticTotal.toStringAsFixed(0)}',
-                style: amountStyle?.copyWith(fontSize: (amountStyle?.fontSize ?? 14) + 2),
-              ),
-              if (optimisticText.isNotEmpty) ...[
-                const SizedBox(height: 4),
-                Text(optimisticText, style: bodyStyle, maxLines: 4, overflow: TextOverflow.ellipsis),
-              ],
-              const SizedBox(height: 16),
-            ],
-            if (worstCaseTotal != null) ...[
-              Text('Worst case', style: labelStyle),
-              const SizedBox(height: 4),
-              Text(
-                'EGP ${worstCaseTotal.toStringAsFixed(0)}',
-                style: amountStyle?.copyWith(
-                  fontSize: (amountStyle?.fontSize ?? 14) + 2,
-                  color: theme.colorScheme.error,
-                ),
-              ),
-              if (worstCaseText.isNotEmpty) ...[
-                const SizedBox(height: 4),
-                Text(worstCaseText, style: bodyStyle, maxLines: 2, overflow: TextOverflow.ellipsis),
               ],
             ],
-          ],
+          ),
         ),
       ),
+    );
+
+    // Optimistic card
+    if (optimisticTotal != null) {
+      children.add(SizedBox(height: _cardSpacing));
+      children.add(
+        Card(
+          child: Padding(
+            padding: _cardPadding,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text('Optimistic prediction', style: labelStyle),
+                const SizedBox(height: 6),
+                Text(
+                  'EGP ${optimisticTotal.toStringAsFixed(0)}',
+                  style: amountStyle?.copyWith(fontSize: (amountStyle?.fontSize ?? 14) + 2),
+                ),
+                if (optimisticText.isNotEmpty) ...[
+                  const SizedBox(height: 6),
+                  Text(optimisticText, style: bodyStyle, maxLines: 4, overflow: TextOverflow.ellipsis),
+                ],
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    // More likely card
+    if (moreLikelyTotal != null) {
+      children.add(SizedBox(height: _cardSpacing));
+      children.add(
+        Card(
+          child: Padding(
+            padding: _cardPadding,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text('More likely', style: labelStyle),
+                const SizedBox(height: 6),
+                Text(
+                  'EGP ${moreLikelyTotal.toStringAsFixed(0)}',
+                  style: amountStyle?.copyWith(
+                    fontSize: (amountStyle?.fontSize ?? 14) + 2,
+                    color: theme.colorScheme.tertiary,
+                  ),
+                ),
+                if (moreLikelyText.isNotEmpty) ...[
+                  const SizedBox(height: 6),
+                  Text(moreLikelyText, style: bodyStyle, maxLines: 4, overflow: TextOverflow.ellipsis),
+                ],
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    // Worst case card
+    if (worstCaseTotal != null) {
+      children.add(SizedBox(height: _cardSpacing));
+      children.add(
+        Card(
+          child: Padding(
+            padding: _cardPadding,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text('Worst case', style: labelStyle),
+                const SizedBox(height: 6),
+                Text(
+                  'EGP ${worstCaseTotal.toStringAsFixed(0)}',
+                  style: amountStyle?.copyWith(
+                    fontSize: (amountStyle?.fontSize ?? 14) + 2,
+                    color: theme.colorScheme.error,
+                  ),
+                ),
+                if (worstCaseText.isNotEmpty) ...[
+                  const SizedBox(height: 6),
+                  Text(worstCaseText, style: bodyStyle, maxLines: 2, overflow: TextOverflow.ellipsis),
+                ],
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: children,
     );
   }
 }

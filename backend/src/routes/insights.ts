@@ -401,9 +401,26 @@ insightsRouter.get('/predict-end-of-month', async (req: AuthRequest, res) => {
     const optimisticProjectedAdditional = recurringDailyRate * daysRemaining;
     const optimisticPredictedTotal = Math.round((spentSoFar + optimisticProjectedAdditional) * 100) / 100;
 
+    // More likely: optimistic + top 2 one-off transactions assumed to repeat once each
+    const oneOffTx: { amount: number; merchant: string | null }[] = [];
+    for (const t of transactions) {
+      const merchant = (t.merchant || '').trim() || 'Unknown';
+      if ((byMerchant.get(merchant)?.count ?? 0) >= 2) continue;
+      oneOffTx.push({ amount: effectiveAmount(t), merchant: t.merchant });
+    }
+    oneOffTx.sort((a, b) => b.amount - a.amount);
+    const topTwoOneOff = oneOffTx.slice(0, 2);
+    const oneOffRepeatSum = topTwoOneOff.reduce((s, t) => s + t.amount, 0);
+    const moreLikelyPredictedTotal = Math.round((optimisticPredictedTotal + oneOffRepeatSum) * 100) / 100;
+
     // Worst case: current daily rate continues for full month
     const dailyRate = spentSoFar / daysElapsed;
     const worstCasePredictedTotal = Math.round(dailyRate * daysInMonth * 100) / 100;
+
+    const moreLikelyParts = topTwoOneOff.map((t) => `EGP ${Math.round(t.amount)} (${t.merchant || 'Unknown'})`);
+    const moreLikelyText = topTwoOneOff.length > 0
+      ? `Optimistic plus ${topTwoOneOff.length} one-off transaction(s) assumed to repeat once: ${moreLikelyParts.join(', ')}.`
+      : 'Same as optimistic; no one-off transactions to project.';
 
     const payload = {
       spent_so_far: Math.round(spentSoFar * 100) / 100,
@@ -413,10 +430,12 @@ insightsRouter.get('/predict-end-of-month', async (req: AuthRequest, res) => {
       one_off_total: oneOffTotal,
       recurring_vendors_count: recurringVendorsCount,
       optimistic_predicted_total: optimisticPredictedTotal,
+      more_likely_predicted_total: moreLikelyPredictedTotal,
       worst_case_predicted_total: worstCasePredictedTotal,
       optimistic_text: recurringVendorsCount > 0
         ? `Only recurring spending (${recurringVendorsCount} vendor(s), EGP ${Math.round(recurringTotal)} so far) is projected to continue. One-off spend not repeated.`
         : 'No recurring vendors (same merchant 2+ times) this month; projection equals spending so far.',
+      more_likely_text: moreLikelyText,
       worst_case_text: `If current daily rate (EGP ${Math.round(dailyRate)}/day) continues through month end.`,
     };
     res.json(payload);

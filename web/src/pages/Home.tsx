@@ -47,6 +47,28 @@ type BudgetByCategoryItem = {
   difference: number;
 };
 
+type SpendingPatterns = {
+  peak_time_of_day: { hour: number; amount: number } | null;
+  peak_day_of_month: { day: number; amount: number } | null;
+  peak_day_of_week: { day_of_week: number; day_name: string; amount: number } | null;
+  top_vendor: { name: string; amount: number } | null;
+  top_category: { name: string; amount: number } | null;
+  spending_trend: { trend: 'up' | 'down' | 'same'; percent_change: number; current_total: number; previous_total: number } | null;
+  largest_transaction: { amount: number; date: string; merchant: string; category_name: string } | null;
+};
+
+type Prediction = {
+  spent_so_far: number;
+  days_elapsed: number;
+  days_remaining: number;
+  optimistic_predicted_total: number;
+  more_likely_predicted_total: number;
+  worst_case_predicted_total: number;
+  optimistic_text: string;
+  more_likely_text: string;
+  worst_case_text: string;
+};
+
 const PIE_COLORS = [
   '#0d9b9e', '#0b8588', '#2196F3', '#E91E63', '#795548', '#9E9E9E', '#FF9800', '#4CAF50',
   '#607D8B', '#00BCD4', '#FF5722', '#3F51B5', '#009688', '#8BC34A', '#03A9F4', '#CDDC39',
@@ -58,6 +80,35 @@ function monthRange(month: string): [string, string] {
   const lastDay = new Date(y, m, 0).getDate();
   const end = `${y}-${String(m).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
   return [start, end];
+}
+
+function hourLabel(hour: number): string {
+  if (hour === 0) return 'midnight';
+  if (hour === 12) return 'noon';
+  if (hour < 12) return `${hour}am`;
+  return `${hour - 12}pm`;
+}
+
+/** Split answer text and wrap EGP amounts / numbers in emphasized span */
+function InsightAnswer({ text }: { text: string }) {
+  const re = /(EGP\s*[\d,]+(?:\.\d+)?|[-+]?\d+(?:,\d{3})*(?:\.\d+)?%?)/g;
+  const parts: React.ReactNode[] = [];
+  let lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > lastIndex) {
+      parts.push(text.slice(lastIndex, m.index));
+    }
+    parts.push(
+      <span key={m.index} style={{ color: 'var(--mezan-accent)', fontWeight: 700 }}>
+        {m[0]}
+      </span>
+    );
+    lastIndex = m.index + m[0].length;
+  }
+  if (lastIndex < text.length) parts.push(text.slice(lastIndex));
+  if (parts.length === 0) return <>{text}</>;
+  return <>{parts}</>;
 }
 
 /** Custom pie label placed further from the pie so label lines are longer */
@@ -249,6 +300,8 @@ export default function Home() {
     total_actual: number;
     total_difference: number;
   } | null>(null);
+  const [insights, setInsights] = useState<SpendingPatterns | null>(null);
+  const [prediction, setPrediction] = useState<Prediction | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
@@ -265,6 +318,15 @@ export default function Home() {
     if (!token) return;
     setLoading(true);
     setError('');
+    const insightsPromise = api<SpendingPatterns>('/v1/insights/spending-patterns', {
+      token,
+      query: { from, to },
+    }).catch(() => null);
+    const predictionPromise = api<Prediction>('/v1/insights/predict-end-of-month', {
+      token,
+      query: { month },
+    }).catch(() => null);
+
     Promise.all([
       api<{ transactions: Transaction[]; total_count?: number }>('/v1/transactions', {
         token,
@@ -288,13 +350,17 @@ export default function Home() {
         token,
         query: useAllTime ? { month, from, to } : { month },
       }),
+      insightsPromise,
+      predictionPromise,
     ])
-      .then(([txRes, catRes, budgetRes, summaryRes, byCatRes]) => {
+      .then(([txRes, catRes, budgetRes, summaryRes, byCatRes, insightsRes, predictionRes]) => {
         setTransactions(txRes.transactions || []);
         setCategories(catRes.categories || []);
         setBudgetStatus(budgetRes.budget_status || []);
         setSummary(summaryRes.summary || []);
         setBudgetByCategory(byCatRes);
+        setInsights(insightsRes ?? null);
+        setPrediction(predictionRes ?? null);
       })
       .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load'))
       .finally(() => setLoading(false));
@@ -640,6 +706,142 @@ export default function Home() {
           </div>
         )}
       </div>
+
+      {/* Insights – one card per insight */}
+      {(insights && (
+        (insights.peak_time_of_day || insights.peak_day_of_month || insights.peak_day_of_week ||
+          insights.top_vendor || insights.top_category || insights.spending_trend || insights.largest_transaction)) && (
+        <>
+          <h2 className="home-card-title" style={{ marginTop: '1.5rem' }}>Insights</h2>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginTop: '0.5rem' }}>
+            {insights.peak_time_of_day && (
+              <div className="card" style={{ padding: '0.75rem 1rem' }}>
+                <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--mezan-text-muted)' }}>
+                  When do you usually spend more (time of day)?
+                </p>
+                <p style={{ margin: '0.35rem 0 0 0', fontWeight: 600 }}>
+                  <InsightAnswer
+                    text={`Around ${hourLabel(insights.peak_time_of_day.hour)} (EGP ${insights.peak_time_of_day.amount.toFixed(0)} in that hour)`}
+                  />
+                </p>
+              </div>
+            )}
+            {insights.peak_day_of_month && (
+              <div className="card" style={{ padding: '0.75rem 1rem' }}>
+                <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--mezan-text-muted)' }}>
+                  When do you usually spend more (day of month)?
+                </p>
+                <p style={{ margin: '0.35rem 0 0 0', fontWeight: 600 }}>
+                  <InsightAnswer
+                    text={`Around day ${insights.peak_day_of_month.day} (EGP ${insights.peak_day_of_month.amount.toFixed(0)} on that day)`}
+                  />
+                </p>
+              </div>
+            )}
+            {insights.peak_day_of_week && (
+              <div className="card" style={{ padding: '0.75rem 1rem' }}>
+                <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--mezan-text-muted)' }}>
+                  Busiest day of week (by spend)?
+                </p>
+                <p style={{ margin: '0.35rem 0 0 0', fontWeight: 600 }}>
+                  <InsightAnswer
+                    text={`${insights.peak_day_of_week.day_name} — EGP ${insights.peak_day_of_week.amount.toFixed(0)}`}
+                  />
+                </p>
+              </div>
+            )}
+            {insights.top_vendor && (
+              <div className="card" style={{ padding: '0.75rem 1rem' }}>
+                <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--mezan-text-muted)' }}>
+                  What vendor is taking most of your money?
+                </p>
+                <p style={{ margin: '0.35rem 0 0 0', fontWeight: 600 }}>
+                  <InsightAnswer text={`${insights.top_vendor.name} — EGP ${insights.top_vendor.amount.toFixed(0)}`} />
+                </p>
+              </div>
+            )}
+            {insights.top_category && (
+              <div className="card" style={{ padding: '0.75rem 1rem' }}>
+                <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--mezan-text-muted)' }}>
+                  What category is taking most of your spending?
+                </p>
+                <p style={{ margin: '0.35rem 0 0 0', fontWeight: 600 }}>
+                  <InsightAnswer text={`${insights.top_category.name} — EGP ${insights.top_category.amount.toFixed(0)}`} />
+                </p>
+              </div>
+            )}
+            {insights.spending_trend && (
+              <div className="card" style={{ padding: '0.75rem 1rem' }}>
+                <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--mezan-text-muted)' }}>
+                  Spending trend vs previous period?
+                </p>
+                <p style={{ margin: '0.35rem 0 0 0', fontWeight: 600 }}>
+                  <InsightAnswer
+                    text={`${insights.spending_trend.trend === 'up' ? 'Up' : insights.spending_trend.trend === 'down' ? 'Down' : 'Same'} ${insights.spending_trend.percent_change >= 0 ? '+' : ''}${insights.spending_trend.percent_change.toFixed(1)}% vs previous period`}
+                  />
+                </p>
+              </div>
+            )}
+            {insights.largest_transaction && (
+              <div className="card" style={{ padding: '0.75rem 1rem' }}>
+                <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--mezan-text-muted)' }}>
+                  Largest transaction?
+                </p>
+                <p style={{ margin: '0.35rem 0 0 0', fontWeight: 600 }}>
+                  <InsightAnswer
+                    text={`EGP ${insights.largest_transaction.amount.toFixed(0)} — ${insights.largest_transaction.merchant} (${insights.largest_transaction.date})`}
+                  />
+                </p>
+              </div>
+            )}
+          </div>
+        </>
+      ))}
+
+      {/* Prediction – intro card + Optimistic, More likely, Worst case */}
+      {prediction && (
+        <>
+          <h2 className="home-card-title" style={{ marginTop: '1.5rem' }}>Prediction</h2>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginTop: '0.5rem' }}>
+            <div className="card" style={{ padding: '0.75rem 1rem' }}>
+              <p style={{ margin: 0, fontSize: '0.9rem', color: 'var(--mezan-text-muted)' }}>
+                Given current spending, how much total spend is predicted by end of month?
+              </p>
+              <p style={{ margin: '0.5rem 0 0 0', fontSize: '0.85rem' }}>
+                Spent so far: <span style={{ fontWeight: 600, color: 'var(--mezan-accent)' }}>EGP {prediction.spent_so_far.toFixed(0)}</span>
+                {' · '}{prediction.days_remaining} days left in month
+              </p>
+            </div>
+            <div className="card" style={{ padding: '0.75rem 1rem' }}>
+              <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--mezan-text-muted)' }}>Optimistic prediction</p>
+              <p style={{ margin: '0.35rem 0 0 0', fontWeight: 700, fontSize: '1.1rem', color: 'var(--mezan-accent)' }}>
+                EGP {prediction.optimistic_predicted_total.toFixed(0)}
+              </p>
+              {prediction.optimistic_text && (
+                <p style={{ margin: '0.35rem 0 0 0', fontSize: '0.85rem', lineHeight: 1.35 }}>{prediction.optimistic_text}</p>
+              )}
+            </div>
+            <div className="card" style={{ padding: '0.75rem 1rem' }}>
+              <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--mezan-text-muted)' }}>More likely</p>
+              <p style={{ margin: '0.35rem 0 0 0', fontWeight: 700, fontSize: '1.1rem', color: 'var(--mezan-success)' }}>
+                EGP {prediction.more_likely_predicted_total.toFixed(0)}
+              </p>
+              {prediction.more_likely_text && (
+                <p style={{ margin: '0.35rem 0 0 0', fontSize: '0.85rem', lineHeight: 1.35 }}>{prediction.more_likely_text}</p>
+              )}
+            </div>
+            <div className="card" style={{ padding: '0.75rem 1rem' }}>
+              <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--mezan-text-muted)' }}>Worst case</p>
+              <p style={{ margin: '0.35rem 0 0 0', fontWeight: 700, fontSize: '1.1rem', color: 'var(--mezan-danger)' }}>
+                EGP {prediction.worst_case_predicted_total.toFixed(0)}
+              </p>
+              {prediction.worst_case_text && (
+                <p style={{ margin: '0.35rem 0 0 0', fontSize: '0.85rem', lineHeight: 1.35 }}>{prediction.worst_case_text}</p>
+              )}
+            </div>
+          </div>
+        </>
+      )}
 
       <div className="home-section-header">
         <h2 className="home-section-title">Recent transactions</h2>
