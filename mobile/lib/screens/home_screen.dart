@@ -735,14 +735,20 @@ class _InsightsSection extends StatelessWidget {
         theme: theme,
       ));
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        for (int i = 0; i < cards.length; i++) ...[
-          if (i > 0) const SizedBox(height: 8),
-          cards[i],
-        ],
-      ],
+    return Card(
+      color: theme.colorScheme.surface,
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            for (int i = 0; i < cards.length; i++) ...[
+              if (i > 0) const SizedBox(height: 8),
+              cards[i],
+            ],
+          ],
+        ),
+      ),
     );
   }
 
@@ -853,57 +859,60 @@ class _PredictionSection extends StatelessWidget {
       color: theme.colorScheme.onSurfaceVariant,
     );
 
+    const lightGreen = Color(0xFFE8F5E9);
+    const lightBlue = Color(0xFFE3F2FD);
+    const lightRed = Color(0xFFFFEBEE);
+
     final children = <Widget>[];
 
-    // Intro card: question + spent so far
+    // Intro text (no card, inside section)
     children.add(
-      Card(
-        child: Padding(
-          padding: _cardPadding,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text(
-                'Given current spending, how much total spend is predicted by end of month?',
-                style: labelStyle,
-                maxLines: 3,
-                overflow: TextOverflow.visible,
-              ),
-              if (spent != null || daysRemaining != null) ...[
-                const SizedBox(height: 10),
-                Text.rich(
-                  TextSpan(
-                    style: subtitleStyle,
-                    children: [
-                      if (spent != null)
-                        TextSpan(text: 'Spent so far: ', style: subtitleStyle),
-                      if (spent != null)
-                        TextSpan(
-                          text: 'EGP ${spent.toStringAsFixed(0)}',
-                          style: subtitleStyle?.copyWith(
-                            fontWeight: FontWeight.w600,
-                            color: theme.colorScheme.primary,
-                          ),
+      Padding(
+        padding: const EdgeInsets.only(bottom: 12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              'Given current spending, how much total spend is predicted by end of month?',
+              style: labelStyle,
+              maxLines: 3,
+              overflow: TextOverflow.visible,
+            ),
+            if (spent != null || daysRemaining != null) ...[
+              const SizedBox(height: 8),
+              Text.rich(
+                TextSpan(
+                  style: subtitleStyle,
+                  children: [
+                    if (spent != null)
+                      TextSpan(text: 'Spent so far: ', style: subtitleStyle),
+                    if (spent != null)
+                      TextSpan(
+                        text: 'EGP ${spent.toStringAsFixed(0)}',
+                        style: subtitleStyle?.copyWith(
+                          fontWeight: FontWeight.w600,
+                          color: theme.colorScheme.primary,
                         ),
-                      if (spent != null && daysRemaining != null)
-                        const TextSpan(text: '  ·  '),
-                      if (daysRemaining != null)
-                        TextSpan(text: '$daysRemaining days left in month'),
-                    ],
-                  ),
+                      ),
+                    if (spent != null && daysRemaining != null)
+                      const TextSpan(text: '  ·  '),
+                    if (daysRemaining != null)
+                      TextSpan(text: '$daysRemaining days left in month'),
+                  ],
                 ),
-              ],
+              ),
             ],
-          ),
+          ],
         ),
       ),
     );
 
-    // Optimistic card
+    // Optimistic card – light green
     if (optimisticTotal != null) {
       children.add(SizedBox(height: _cardSpacing));
       children.add(
         Card(
+          color: lightGreen,
           child: Padding(
             padding: _cardPadding,
             child: Column(
@@ -926,11 +935,12 @@ class _PredictionSection extends StatelessWidget {
       );
     }
 
-    // More likely card
+    // More likely card – light blue
     if (moreLikelyTotal != null) {
       children.add(SizedBox(height: _cardSpacing));
       children.add(
         Card(
+          color: lightBlue,
           child: Padding(
             padding: _cardPadding,
             child: Column(
@@ -956,11 +966,12 @@ class _PredictionSection extends StatelessWidget {
       );
     }
 
-    // Worst case card
+    // Worst case card – light red
     if (worstCaseTotal != null) {
       children.add(SizedBox(height: _cardSpacing));
       children.add(
         Card(
+          color: lightRed,
           child: Padding(
             padding: _cardPadding,
             child: Column(
@@ -986,9 +997,15 @@ class _PredictionSection extends StatelessWidget {
       );
     }
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: children,
+    return Card(
+      color: theme.colorScheme.surface,
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: children,
+        ),
+      ),
     );
   }
 }

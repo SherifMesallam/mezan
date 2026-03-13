@@ -707,15 +707,15 @@ export default function Home() {
         )}
       </div>
 
-      {/* Insights – one card per insight */}
+      {/* Insights – section container with white bg, one card per insight inside */}
       {(insights && (
         (insights.peak_time_of_day || insights.peak_day_of_month || insights.peak_day_of_week ||
           insights.top_vendor || insights.top_category || insights.spending_trend || insights.largest_transaction)) && (
-        <>
-          <h2 className="home-card-title" style={{ marginTop: '1.5rem' }}>Insights</h2>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginTop: '0.5rem' }}>
+        <div className="card" style={{ marginTop: '1.5rem', padding: '1rem' }}>
+          <h2 className="home-card-title" style={{ margin: 0 }}>Insights</h2>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginTop: '0.75rem' }}>
             {insights.peak_time_of_day && (
-              <div className="card" style={{ padding: '0.75rem 1rem' }}>
+              <div className="card" style={{ padding: '0.75rem 1rem', margin: 0, background: '#f8f9fa' }}>
                 <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--mezan-text-muted)' }}>
                   When do you usually spend more (time of day)?
                 </p>
@@ -727,7 +727,7 @@ export default function Home() {
               </div>
             )}
             {insights.peak_day_of_month && (
-              <div className="card" style={{ padding: '0.75rem 1rem' }}>
+              <div className="card" style={{ padding: '0.75rem 1rem', margin: 0, background: '#f8f9fa' }}>
                 <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--mezan-text-muted)' }}>
                   When do you usually spend more (day of month)?
                 </p>
@@ -739,7 +739,7 @@ export default function Home() {
               </div>
             )}
             {insights.peak_day_of_week && (
-              <div className="card" style={{ padding: '0.75rem 1rem' }}>
+              <div className="card" style={{ padding: '0.75rem 1rem', margin: 0, background: '#f8f9fa' }}>
                 <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--mezan-text-muted)' }}>
                   Busiest day of week (by spend)?
                 </p>
@@ -751,7 +751,7 @@ export default function Home() {
               </div>
             )}
             {insights.top_vendor && (
-              <div className="card" style={{ padding: '0.75rem 1rem' }}>
+              <div className="card" style={{ padding: '0.75rem 1rem', margin: 0, background: '#f8f9fa' }}>
                 <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--mezan-text-muted)' }}>
                   What vendor is taking most of your money?
                 </p>
@@ -761,7 +761,7 @@ export default function Home() {
               </div>
             )}
             {insights.top_category && (
-              <div className="card" style={{ padding: '0.75rem 1rem' }}>
+              <div className="card" style={{ padding: '0.75rem 1rem', margin: 0, background: '#f8f9fa' }}>
                 <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--mezan-text-muted)' }}>
                   What category is taking most of your spending?
                 </p>
@@ -771,7 +771,7 @@ export default function Home() {
               </div>
             )}
             {insights.spending_trend && (
-              <div className="card" style={{ padding: '0.75rem 1rem' }}>
+              <div className="card" style={{ padding: '0.75rem 1rem', margin: 0, background: '#f8f9fa' }}>
                 <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--mezan-text-muted)' }}>
                   Spending trend vs previous period?
                 </p>
@@ -783,7 +783,7 @@ export default function Home() {
               </div>
             )}
             {insights.largest_transaction && (
-              <div className="card" style={{ padding: '0.75rem 1rem' }}>
+              <div className="card" style={{ padding: '0.75rem 1rem', margin: 0, background: '#f8f9fa' }}>
                 <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--mezan-text-muted)' }}>
                   Largest transaction?
                 </p>
@@ -795,24 +795,22 @@ export default function Home() {
               </div>
             )}
           </div>
-        </>
+        </div>
       ))}
 
-      {/* Prediction – intro card + Optimistic, More likely, Worst case */}
+      {/* Prediction – section container; intro text then 3 colored cards */}
       {prediction && (
-        <>
-          <h2 className="home-card-title" style={{ marginTop: '1.5rem' }}>Prediction</h2>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginTop: '0.5rem' }}>
-            <div className="card" style={{ padding: '0.75rem 1rem' }}>
-              <p style={{ margin: 0, fontSize: '0.9rem', color: 'var(--mezan-text-muted)' }}>
-                Given current spending, how much total spend is predicted by end of month?
-              </p>
-              <p style={{ margin: '0.5rem 0 0 0', fontSize: '0.85rem' }}>
-                Spent so far: <span style={{ fontWeight: 600, color: 'var(--mezan-accent)' }}>EGP {prediction.spent_so_far.toFixed(0)}</span>
-                {' · '}{prediction.days_remaining} days left in month
-              </p>
-            </div>
-            <div className="card" style={{ padding: '0.75rem 1rem' }}>
+        <div className="card" style={{ marginTop: '1.5rem', padding: '1rem' }}>
+          <h2 className="home-card-title" style={{ margin: 0 }}>Prediction</h2>
+          <p style={{ margin: '0.5rem 0 0 0', fontSize: '0.9rem', color: 'var(--mezan-text-muted)' }}>
+            Given current spending, how much total spend is predicted by end of month?
+          </p>
+          <p style={{ margin: '0.25rem 0 0 0', fontSize: '0.85rem' }}>
+            Spent so far: <span style={{ fontWeight: 600, color: 'var(--mezan-accent)' }}>EGP {prediction.spent_so_far.toFixed(0)}</span>
+            {' · '}{prediction.days_remaining} days left in month
+          </p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginTop: '1rem' }}>
+            <div className="card" style={{ padding: '0.75rem 1rem', margin: 0, background: '#e8f5e9' }}>
               <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--mezan-text-muted)' }}>Optimistic prediction</p>
               <p style={{ margin: '0.35rem 0 0 0', fontWeight: 700, fontSize: '1.1rem', color: 'var(--mezan-accent)' }}>
                 EGP {prediction.optimistic_predicted_total.toFixed(0)}
@@ -821,7 +819,7 @@ export default function Home() {
                 <p style={{ margin: '0.35rem 0 0 0', fontSize: '0.85rem', lineHeight: 1.35 }}>{prediction.optimistic_text}</p>
               )}
             </div>
-            <div className="card" style={{ padding: '0.75rem 1rem' }}>
+            <div className="card" style={{ padding: '0.75rem 1rem', margin: 0, background: '#e3f2fd' }}>
               <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--mezan-text-muted)' }}>More likely</p>
               <p style={{ margin: '0.35rem 0 0 0', fontWeight: 700, fontSize: '1.1rem', color: 'var(--mezan-success)' }}>
                 EGP {prediction.more_likely_predicted_total.toFixed(0)}
@@ -830,7 +828,7 @@ export default function Home() {
                 <p style={{ margin: '0.35rem 0 0 0', fontSize: '0.85rem', lineHeight: 1.35 }}>{prediction.more_likely_text}</p>
               )}
             </div>
-            <div className="card" style={{ padding: '0.75rem 1rem' }}>
+            <div className="card" style={{ padding: '0.75rem 1rem', margin: 0, background: '#ffebee' }}>
               <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--mezan-text-muted)' }}>Worst case</p>
               <p style={{ margin: '0.35rem 0 0 0', fontWeight: 700, fontSize: '1.1rem', color: 'var(--mezan-danger)' }}>
                 EGP {prediction.worst_case_predicted_total.toFixed(0)}
@@ -840,7 +838,7 @@ export default function Home() {
               )}
             </div>
           </div>
-        </>
+        </div>
       )}
 
       <div className="home-section-header">
