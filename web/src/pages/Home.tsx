@@ -352,6 +352,43 @@ function getThisWeekRange(): [string, string] {
   return [mon.toISOString().slice(0, 10), sun.toISOString().slice(0, 10)];
 }
 
+function getTodayRange(): [string, string] {
+  const d = new Date();
+  const s = d.toISOString().slice(0, 10);
+  return [s, s];
+}
+
+function getYesterdayRange(): [string, string] {
+  const d = new Date();
+  d.setDate(d.getDate() - 1);
+  const s = d.toISOString().slice(0, 10);
+  return [s, s];
+}
+
+function getPreviousWeekRange(): [string, string] {
+  const today = new Date();
+  const day = today.getDay();
+  const monOffset = day === 0 ? -6 : 1 - day;
+  const thisMon = new Date(today);
+  thisMon.setDate(today.getDate() + monOffset);
+  const lastMon = new Date(thisMon);
+  lastMon.setDate(thisMon.getDate() - 7);
+  const lastSun = new Date(lastMon);
+  lastSun.setDate(lastMon.getDate() + 6);
+  return [lastMon.toISOString().slice(0, 10), lastSun.toISOString().slice(0, 10)];
+}
+
+function getPreviousMonthRange(): [string, string] {
+  const today = new Date();
+  const lastMonth = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+  const y = lastMonth.getFullYear();
+  const m = lastMonth.getMonth();
+  const lastDay = new Date(y, m + 1, 0).getDate();
+  const start = `${y}-${String(m + 1).padStart(2, '0')}-01`;
+  const end = `${y}-${String(m + 1).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+  return [start, end];
+}
+
 function hourLabel(hour: number): string {
   if (hour === 0) return 'midnight';
   if (hour === 12) return 'noon';
@@ -618,7 +655,7 @@ export default function Home() {
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [refreshCounter, setRefreshCounter] = useState(0);
-  const [quickFilter, setQuickFilter] = useState<'over_budget' | 'uncategorized' | 'this_week' | 'recurring' | null>(null);
+  const [quickFilter, setQuickFilter] = useState<'today' | 'yesterday' | 'this_week' | 'previous_week' | 'previous_month' | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [debouncedSearchForApi, setDebouncedSearchForApi] = useState('');
   const [deletedForUndo, setDeletedForUndo] = useState<Transaction | null>(null);
@@ -711,15 +748,6 @@ export default function Home() {
     return () => clearTimeout(t);
   }, [deletedForUndo]);
 
-  const merchantCount = useMemo(() => {
-    const m = new Map<string, number>();
-    for (const t of transactions) {
-      const k = (t.merchant || '').trim() || '—';
-      m.set(k, (m.get(k) || 0) + 1);
-    }
-    return m;
-  }, [transactions]);
-
   const filteredTransactions = useMemo(() => {
     let list = transactions;
     const q = searchQuery.trim().toLowerCase();
@@ -731,15 +759,10 @@ export default function Home() {
         return merchant.includes(q) || cat.includes(q) || tags.includes(q);
       });
     }
-    if (quickFilter === 'uncategorized') {
-      list = list.filter((t) => !t.category_id || !t.category);
-    } else if (quickFilter === 'recurring') {
-      list = list.filter((t) => (merchantCount.get((t.merchant || '').trim() || '—') || 0) >= 2);
-    }
     return list;
-  }, [transactions, searchQuery, quickFilter, merchantCount]);
+  }, [transactions, searchQuery]);
 
-  const hasTransactionFilter = searchQuery.trim() !== '' || quickFilter === 'uncategorized' || quickFilter === 'recurring';
+  const hasTransactionFilter = searchQuery.trim() !== '';
 
   const allTagNames = useMemo(
     () => [...new Set(transactions.flatMap((t) => (t.tags || []).map((tag) => tag.name)))],
@@ -748,7 +771,9 @@ export default function Home() {
   const isTagSearch =
     searchQuery.trim() !== '' &&
     allTagNames.some((name) => name.toLowerCase().includes(searchQuery.trim().toLowerCase()));
-  const hideBudgetAndSummary = isTagSearch || quickFilter === 'uncategorized';
+  const hideBudgetAndSummary = isTagSearch;
+  const useCustomDateRange = useDateRange || useAllTime;
+  const hideBudgetRemaining = hideBudgetAndSummary || useCustomDateRange;
 
   const categoryIdsFromFiltered = useMemo(
     () => new Set(filteredTransactions.map((t) => t.category_id).filter(Boolean) as string[]),
@@ -758,6 +783,16 @@ export default function Home() {
   function effectiveAmount(t: Transaction): number {
     return t.egp_value != null ? t.egp_value : t.amount;
   }
+
+  const spentByCategoryForPeriod = useMemo(() => {
+    const list = hasTransactionFilter ? filteredTransactions : transactions;
+    const m = new Map<string, number>();
+    for (const t of list) {
+      const name = t.category?.name || 'Uncategorized';
+      m.set(name, (m.get(name) || 0) + effectiveAmount(t));
+    }
+    return [...m.entries()].map(([category_name, spent]) => ({ category_name, spent })).sort((a, b) => b.spent - a.spent);
+  }, [transactions, filteredTransactions, hasTransactionFilter]);
 
   const filteredActualByCategory = useMemo(() => {
     if (!hasTransactionFilter) return null;
@@ -844,11 +879,8 @@ export default function Home() {
         };
       });
     }
-    if (quickFilter === 'over_budget') {
-      return rows.filter((row) => row.budget > 0 && row.actual > row.budget);
-    }
     return rows;
-  }, [budgetByCategory?.items, quickFilter, hasTransactionFilter, filteredActualByCategory]);
+  }, [budgetByCategory?.items, hasTransactionFilter, filteredActualByCategory]);
 
   const filteredBudgetItemsForDisplay = useMemo(() => {
     if (hideBudgetAndSummary) return [];
@@ -872,22 +904,13 @@ export default function Home() {
     return null;
   }, [hasTransactionFilter, hideBudgetAndSummary, filteredBudgetItemsForDisplay]);
 
-  const totalsForDisplay = quickFilter === 'over_budget'
-    ? filteredBudgetItems.reduce(
-        (acc, row) => ({
-          budget: acc.budget + row.budget,
-          actual: acc.actual + row.actual,
-          difference: acc.difference + (row.budget - row.actual),
-        }),
-        { budget: 0, actual: 0, difference: 0 }
-      )
-    : null;
 
   const fullTotalSpent = budgetByCategory?.total_actual ?? 0;
   const totalBudget = budgetByCategory?.total_budget ?? 0;
-  const totalSpent = hasTransactionFilter
-    ? filteredTransactions.reduce((s, t) => s + effectiveAmount(t), 0)
-    : fullTotalSpent;
+  const totalSpent =
+    useCustomDateRange || hasTransactionFilter
+      ? (hasTransactionFilter ? filteredTransactions : transactions).reduce((s, t) => s + effectiveAmount(t), 0)
+      : fullTotalSpent;
   const totalRemaining = totalBudget - fullTotalSpent;
   const exceedsBudget = totalBudget > 0 && fullTotalSpent > totalBudget;
 
@@ -943,8 +966,10 @@ export default function Home() {
     if (sid === 'anomalies') return anomalies.length > 0;
     if (sid === 'predictions-insights') {
       const ins = displayInsights ?? insights;
-      const hasInsights = !!(ins?.peak_time_of_day || ins?.peak_day_of_month || ins?.peak_day_of_week || ins?.top_vendor || ins?.top_category || ins?.spending_trend || ins?.largest_transaction);
-      return !!prediction || hasInsights;
+      const hasApiInsights = !!(ins?.peak_time_of_day || ins?.peak_day_of_month || ins?.peak_day_of_week || ins?.top_vendor || ins?.top_category || ins?.spending_trend || ins?.largest_transaction);
+      const list = hasTransactionFilter ? filteredTransactions : transactions;
+      const hasClientInsights = list.length > 0;
+      return (!!prediction && !useCustomDateRange) || hasApiInsights || hasClientInsights;
     }
     if (sid === 'summary-by-category') {
       if (hideBudgetAndSummary) return false;
@@ -1135,45 +1160,48 @@ export default function Home() {
         </div>
         <div className="home-quick-filters">
           <span className="home-quick-filters-label">Quick filters:</span>
-          <button
-            type="button"
-            className={`home-quick-filter-chip ${quickFilter === 'this_week' ? 'home-quick-filter-chip--active' : ''}`}
-            onClick={() => {
-              if (quickFilter === 'this_week') {
-                setQuickFilter(null);
-                return;
-              }
-              setQuickFilter('this_week');
-              setUseAllTime(false);
-              setUseDateRange(true);
-              const [f, t] = getThisWeekRange();
-              setDateFrom(f);
-              setDateTo(t);
-            }}
-          >
-            This week
-          </button>
-          <button
-            type="button"
-            className={`home-quick-filter-chip ${quickFilter === 'over_budget' ? 'home-quick-filter-chip--active' : ''}`}
-            onClick={() => setQuickFilter(quickFilter === 'over_budget' ? null : 'over_budget')}
-          >
-            Over budget
-          </button>
-          <button
-            type="button"
-            className={`home-quick-filter-chip ${quickFilter === 'uncategorized' ? 'home-quick-filter-chip--active' : ''}`}
-            onClick={() => setQuickFilter(quickFilter === 'uncategorized' ? null : 'uncategorized')}
-          >
-            Uncategorized
-          </button>
-          <button
-            type="button"
-            className={`home-quick-filter-chip ${quickFilter === 'recurring' ? 'home-quick-filter-chip--active' : ''}`}
-            onClick={() => setQuickFilter(quickFilter === 'recurring' ? null : 'recurring')}
-          >
-            Recurring
-          </button>
+          {(['today', 'yesterday', 'this_week', 'previous_week', 'previous_month'] as const).map((preset) => {
+            const ranges: Record<typeof preset, () => [string, string]> = {
+              today: getTodayRange,
+              yesterday: getYesterdayRange,
+              this_week: getThisWeekRange,
+              previous_week: getPreviousWeekRange,
+              previous_month: getPreviousMonthRange,
+            };
+            const labels: Record<typeof preset, string> = {
+              today: 'Today',
+              yesterday: 'Yesterday',
+              this_week: 'This week',
+              previous_week: 'Previous week',
+              previous_month: 'Previous month',
+            };
+            return (
+              <button
+                key={preset}
+                type="button"
+                className={`home-quick-filter-chip ${quickFilter === preset ? 'home-quick-filter-chip--active' : ''}`}
+                onClick={() => {
+                  if (quickFilter === preset) {
+                    setQuickFilter(null);
+                    setUseDateRange(false);
+                    setUseAllTime(false);
+                    const [f, t] = monthRange(month);
+                    setDateFrom(f);
+                    setDateTo(t);
+                    return;
+                  }
+                  setQuickFilter(preset);
+                  setUseAllTime(false);
+                  setUseDateRange(true);
+                  const [f, t] = ranges[preset]();
+                  setDateFrom(f);
+                  setDateTo(t);
+                }}
+              >
+                {labels[preset]}
+              </button>
+            );
+          })}
         </div>
       </div>
 
@@ -1187,7 +1215,7 @@ export default function Home() {
       )}
 
       {/* Summary cards */}
-      <div className={`home-summary-cards ${prediction && !hideBudgetAndSummary ? 'home-summary-cards--three' : ''}`}>
+      <div className={`home-summary-cards ${prediction && !hideBudgetRemaining && !useCustomDateRange ? 'home-summary-cards--three' : ''}`}>
         <div className="home-summary-card">
           <span className="home-summary-card-label">{hasTransactionFilter ? 'Filtered spent' : 'Total spent'}</span>
           <span
@@ -1197,7 +1225,7 @@ export default function Home() {
             EGP {formatAmount(totalSpent)}
           </span>
         </div>
-        {!hideBudgetAndSummary && (
+        {!hideBudgetRemaining && (
         <div className="home-summary-card">
           <span className="home-summary-card-label">
             Budget remaining{hasTransactionFilter ? ' (filtered)' : ''}
@@ -1210,11 +1238,11 @@ export default function Home() {
           </span>
         </div>
         )}
-        {prediction && (
+        {prediction && !useCustomDateRange && (
           <div className="home-summary-card home-summary-card--predictions">
             <span className="home-summary-card-label">Predictions</span>
             <p className="home-predictions-intro">
-              Estimated total spend by end of month based on current pace. Click a tile to jump to details.
+              End-of-month estimate. Click a tile for details.
             </p>
             <div className="home-predictions-inner">
               <button
@@ -1302,8 +1330,9 @@ export default function Home() {
           )}
           {id === 'predictions-insights' && (() => {
             const ins = displayInsights ?? insights;
-            const hasInsights = !!(ins?.peak_time_of_day || ins?.peak_day_of_month || ins?.peak_day_of_week || ins?.top_vendor || ins?.top_category || ins?.spending_trend || ins?.largest_transaction);
-            return prediction || hasInsights;
+            const hasApiInsights = !!(ins?.peak_time_of_day || ins?.peak_day_of_month || ins?.peak_day_of_week || ins?.top_vendor || ins?.top_category || ins?.spending_trend || ins?.largest_transaction);
+            const list = hasTransactionFilter ? filteredTransactions : transactions;
+            return (!!prediction && !useCustomDateRange) || hasApiInsights || list.length > 0;
           })() && (
         <CollapsibleSection
           title="Predictions & insights"
@@ -1311,13 +1340,8 @@ export default function Home() {
           onToggle={() => setPredictionsInsightsExpanded((v) => !v)}
         >
           <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-            {prediction && (
+            {prediction && !useCustomDateRange && (
               <div>
-                {(quickFilter === 'uncategorized' || quickFilter === 'recurring') && (
-                  <p style={{ margin: '0 0 0.5rem 0', fontSize: '0.8rem', color: 'var(--mezan-text-muted)', fontStyle: 'italic' }}>
-                    Based on all transactions in the period (not filtered).
-                  </p>
-                )}
                 <p style={{ margin: '0.5rem 0 0 0', fontSize: '0.9rem', color: 'var(--mezan-text-muted)' }}>
                   Given current spending, how much total spend is predicted by end of month?
                 </p>
@@ -1358,131 +1382,106 @@ export default function Home() {
             )}
             {(() => {
               const ins = displayInsights ?? insights;
-              const hasAny = ins?.peak_time_of_day || ins?.peak_day_of_month || ins?.peak_day_of_week || ins?.top_vendor || ins?.top_category || ins?.spending_trend || ins?.largest_transaction;
-              return hasAny ? (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                {(() => {
-                  const ins = displayInsights ?? insights;
-                  if (!ins) return null;
-                  const peakTime = ins.peak_time_of_day;
-                  if (!peakTime) return null;
-                  return (
-                    <div key="peak-time" className="card" style={{ padding: '0.75rem 1rem', margin: 0, background: '#f8f9fa' }}>
-                      <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--mezan-text-muted)' }}>
-                        When do you usually spend more (time of day)?
-                      </p>
-                      <p style={{ margin: '0.35rem 0 0 0', fontWeight: 600 }}>
-                        <InsightAnswer text={`Around ${hourLabel(peakTime.hour)} (EGP ${formatAmount(peakTime.amount, 0)} in that hour)`} />
-                      </p>
+              const list = hasTransactionFilter ? filteredTransactions : transactions;
+              const items: { label: string; value: React.ReactNode }[] = [];
+              if (ins?.peak_time_of_day) {
+                const p = ins.peak_time_of_day;
+                items.push({ label: 'Peak hour', value: <InsightAnswer text={`${hourLabel(p.hour)} · EGP ${formatAmount(p.amount, 0)}`} /> });
+              }
+              if (ins?.peak_day_of_month) {
+                const p = ins.peak_day_of_month;
+                items.push({ label: 'Peak day (month)', value: <InsightAnswer text={`Day ${p.day} · EGP ${formatAmount(p.amount, 0)}`} /> });
+              }
+              if (ins?.peak_day_of_week) {
+                const p = ins.peak_day_of_week;
+                items.push({ label: 'Busiest day', value: <InsightAnswer text={`${p.day_name} · EGP ${formatAmount(p.amount, 0)}`} /> });
+              }
+              if (ins?.top_vendor) {
+                const v = ins.top_vendor;
+                items.push({ label: 'Top vendor', value: <InsightAnswer text={`${v.name} · EGP ${formatAmount(v.amount, 0)}`} /> });
+              }
+              if (ins?.top_category) {
+                const c = ins.top_category;
+                items.push({ label: 'Top category', value: <InsightAnswer text={`${c.name} · EGP ${formatAmount(c.amount, 0)}`} /> });
+              }
+              if (ins?.spending_trend) {
+                const st = ins.spending_trend;
+                items.push({
+                  label: 'Trend',
+                  value: <InsightAnswer text={`${st.trend === 'up' ? 'Up' : st.trend === 'down' ? 'Down' : 'Same'} ${st.percent_change >= 0 ? '+' : ''}${st.percent_change.toFixed(1)}%`} />,
+                });
+              }
+              if (ins?.largest_transaction) {
+                const lt = ins.largest_transaction;
+                items.push({ label: 'Largest', value: <InsightAnswer text={`EGP ${formatAmount(lt.amount, 0)} · ${lt.merchant}`} /> });
+              }
+              if (list.length > 0) {
+                items.push({ label: 'Transactions', value: <InsightAnswer text={`${list.length}`} /> });
+                const spent = list.reduce((s, t) => s + effectiveAmount(t), 0);
+                if (list.length > 0) {
+                  items.push({ label: 'Avg transaction', value: <InsightAnswer text={`EGP ${formatAmount(spent / list.length, 0)}`} /> });
+                }
+                const days = Math.max(1, Math.round((new Date(to).getTime() - new Date(from).getTime()) / (24 * 60 * 60 * 1000)) + 1);
+                if (days > 0) {
+                  items.push({ label: 'Daily avg', value: <InsightAnswer text={`EGP ${formatAmount(spent / days, 0)}/day`} /> });
+                }
+                const amounts = list.map((t) => effectiveAmount(t));
+                const smallest = Math.min(...amounts);
+                const smallestTx = list.find((t) => effectiveAmount(t) === smallest);
+                if (smallestTx && amounts.length > 1) {
+                  items.push({ label: 'Smallest', value: <InsightAnswer text={`EGP ${formatAmount(smallest, 0)} · ${smallestTx.merchant || '—'}`} /> });
+                }
+              }
+              if (items.length === 0) return null;
+              return (
+                <div className="home-insights-grid">
+                  {items.map((item, i) => (
+                    <div key={i} className="home-insight-chip">
+                      <span className="home-insight-chip-label">{item.label}</span>
+                      <span className="home-insight-chip-value">{item.value}</span>
                     </div>
-                  );
-                })()}
-                {(() => {
-                  const ins = displayInsights ?? insights;
-                  const peak = ins?.peak_day_of_month;
-                  if (!peak) return null;
-                  return (
-                    <div key="peak-month" className="card" style={{ padding: '0.75rem 1rem', margin: 0, background: '#f8f9fa' }}>
-                      <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--mezan-text-muted)' }}>
-                        When do you usually spend more (day of month)?
-                      </p>
-                      <p style={{ margin: '0.35rem 0 0 0', fontWeight: 600 }}>
-                        <InsightAnswer text={`Around day ${peak.day} (EGP ${formatAmount(peak.amount, 0)} on that day)`} />
-                      </p>
-                    </div>
-                  );
-                })()}
-                {(() => {
-                  const ins = displayInsights ?? insights;
-                  const peak = ins?.peak_day_of_week;
-                  if (!peak) return null;
-                  return (
-                    <div key="peak-week" className="card" style={{ padding: '0.75rem 1rem', margin: 0, background: '#f8f9fa' }}>
-                      <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--mezan-text-muted)' }}>
-                        Busiest day of week (by spend)?
-                      </p>
-                      <p style={{ margin: '0.35rem 0 0 0', fontWeight: 600 }}>
-                        <InsightAnswer text={`${peak.day_name} — EGP ${formatAmount(peak.amount, 0)}`} />
-                      </p>
-                    </div>
-                  );
-                })()}
-                {(() => {
-                  const ins = displayInsights ?? insights;
-                  const v = ins?.top_vendor;
-                  if (!v) return null;
-                  return (
-                    <div key="top-vendor" className="card" style={{ padding: '0.75rem 1rem', margin: 0, background: '#f8f9fa' }}>
-                      <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--mezan-text-muted)' }}>
-                        What vendor is taking most of your money?
-                      </p>
-                      <p style={{ margin: '0.35rem 0 0 0', fontWeight: 600 }}>
-                        <InsightAnswer text={`${v.name} — EGP ${formatAmount(v.amount, 0)}`} />
-                      </p>
-                    </div>
-                  );
-                })()}
-                {(() => {
-                  const ins = displayInsights ?? insights;
-                  const c = ins?.top_category;
-                  if (!c) return null;
-                  return (
-                    <div key="top-category" className="card" style={{ padding: '0.75rem 1rem', margin: 0, background: '#f8f9fa' }}>
-                      <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--mezan-text-muted)' }}>
-                        What category is taking most of your spending?
-                      </p>
-                      <p style={{ margin: '0.35rem 0 0 0', fontWeight: 600 }}>
-                        <InsightAnswer text={`${c.name} — EGP ${formatAmount(c.amount, 0)}`} />
-                      </p>
-                    </div>
-                  );
-                })()}
-                {(() => {
-                  const ins = displayInsights ?? insights;
-                  const st = ins?.spending_trend;
-                  if (!st) return null;
-                  return (
-                    <div key="spending-trend" className="card" style={{ padding: '0.75rem 1rem', margin: 0, background: '#f8f9fa' }}>
-                      <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--mezan-text-muted)' }}>
-                        Spending trend vs previous period?
-                      </p>
-                      <p style={{ margin: '0.35rem 0 0 0', fontWeight: 600 }}>
-                        <InsightAnswer
-                          text={`${st.trend === 'up' ? 'Up' : st.trend === 'down' ? 'Down' : 'Same'} ${st.percent_change >= 0 ? '+' : ''}${st.percent_change.toFixed(1)}% vs previous period`}
-                        />
-                      </p>
-                    </div>
-                  );
-                })()}
-                {(() => {
-                  const ins = displayInsights ?? insights;
-                  const lt = ins?.largest_transaction;
-                  if (!lt) return null;
-                  return (
-                    <div key="largest" className="card" style={{ padding: '0.75rem 1rem', margin: 0, background: '#f8f9fa' }}>
-                      <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--mezan-text-muted)' }}>
-                        Largest transaction?
-                      </p>
-                      <p style={{ margin: '0.35rem 0 0 0', fontWeight: 600 }}>
-                        <InsightAnswer text={`EGP ${formatAmount(lt.amount, 0)} — ${lt.merchant} (${lt.date})`} />
-                      </p>
-                    </div>
-                  );
-                })()}
-              </div>
-              ) : null;
+                  ))}
+                </div>
+              );
             })()}
           </div>
         </CollapsibleSection>
           )}
           {id === 'summary-by-category' && (
       <CollapsibleSection
-        title="Summary by Category"
+        title={useCustomDateRange ? `Spending by category (${useAllTime ? 'All time' : quickFilter ? { today: 'Today', yesterday: 'Yesterday', this_week: 'This week', previous_week: 'Previous week', previous_month: 'Previous month' }[quickFilter] : `${formatShortDate(dateFrom)} – ${formatShortDate(dateTo)}`})` : 'Summary by Category'}
         expanded={summaryByCategoryExpanded}
         onToggle={() => setSummaryByCategoryExpanded((v) => !v)}
       >
       <div className="card home-summary-card-wrap" style={{ margin: 0, padding: '1rem' }}>
-        {!budgetByCategory || budgetByCategory.items.length === 0 ? (
+        {useCustomDateRange ? (
+          spentByCategoryForPeriod.length === 0 ? (
+            <p className="home-chart-empty">No transactions in this period.</p>
+          ) : (
+            <div className="home-summary-table-wrap">
+              <table className="home-summary-table">
+                <thead>
+                  <tr>
+                    <th className="home-summary-th-cat">Category</th>
+                    <th className="home-summary-th-num">Spent</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {spentByCategoryForPeriod.map((row, index) => (
+                    <tr key={row.category_name} className={index % 2 === 0 ? 'home-summary-row--alt' : ''}>
+                      <td className="home-summary-td-cat">{row.category_name}</td>
+                      <td className="home-summary-td-num home-summary-td-actual">EGP {formatAmount(row.spent)}</td>
+                    </tr>
+                  ))}
+                  <tr className="home-summary-total">
+                    <td className="home-summary-td-cat">Total</td>
+                    <td className="home-summary-td-num home-summary-td-actual">EGP {formatAmount(spentByCategoryForPeriod.reduce((s, r) => s + r.spent, 0))}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          )
+        ) : !budgetByCategory || budgetByCategory.items.length === 0 ? (
           <p className="home-chart-empty">
             No categories. <Link to="/categories">Add categories</Link> and <Link to="/budgets">set budgets</Link>.
           </p>
@@ -1558,16 +1557,16 @@ export default function Home() {
                   );
                 })}
                 <tr className="home-summary-total">
-                  <td className="home-summary-td-cat">Total{totalsForDisplay ? ' (over budget only)' : filteredTotalsForSummary ? ' (filtered)' : ''}</td>
-                  <td className="home-summary-td-num home-summary-td-budget">EGP {formatAmount(totalsForDisplay ? totalsForDisplay.budget : filteredTotalsForSummary ? filteredTotalsForSummary.budget : budgetByCategory.total_budget)}</td>
-                  <td className="home-summary-td-num home-summary-td-actual">EGP {formatAmount(totalsForDisplay ? totalsForDisplay.actual : filteredTotalsForSummary ? filteredTotalsForSummary.actual : budgetByCategory.total_actual)}</td>
-                  <td className={`home-summary-td-num home-summary-diff ${(totalsForDisplay ? totalsForDisplay.difference : filteredTotalsForSummary ? filteredTotalsForSummary.difference : budgetByCategory.total_difference) >= 0 ? 'home-summary-diff--ok' : 'home-summary-diff--over'}`}>
-                    EGP {formatAmount(totalsForDisplay ? totalsForDisplay.difference : filteredTotalsForSummary ? filteredTotalsForSummary.difference : budgetByCategory.total_difference)}
+                  <td className="home-summary-td-cat">Total{filteredTotalsForSummary ? ' (filtered)' : ''}</td>
+                  <td className="home-summary-td-num home-summary-td-budget">EGP {formatAmount(filteredTotalsForSummary ? filteredTotalsForSummary.budget : budgetByCategory.total_budget)}</td>
+                  <td className="home-summary-td-num home-summary-td-actual">EGP {formatAmount(filteredTotalsForSummary ? filteredTotalsForSummary.actual : budgetByCategory.total_actual)}</td>
+                  <td className={`home-summary-td-num home-summary-diff ${(filteredTotalsForSummary ? filteredTotalsForSummary.difference : budgetByCategory.total_difference) >= 0 ? 'home-summary-diff--ok' : 'home-summary-diff--over'}`}>
+                    EGP {formatAmount(filteredTotalsForSummary ? filteredTotalsForSummary.difference : budgetByCategory.total_difference)}
                   </td>
                   <td className="home-summary-td-progress">
-                    {(totalsForDisplay ? totalsForDisplay.budget : filteredTotalsForSummary ? filteredTotalsForSummary.budget : budgetByCategory.total_budget) > 0 && (() => {
-                      const totalBudgetVal = totalsForDisplay ? totalsForDisplay.budget : filteredTotalsForSummary ? filteredTotalsForSummary.budget : budgetByCategory.total_budget;
-                      const totalActual = totalsForDisplay ? totalsForDisplay.actual : filteredTotalsForSummary ? filteredTotalsForSummary.actual : budgetByCategory.total_actual;
+                    {(filteredTotalsForSummary ? filteredTotalsForSummary.budget : budgetByCategory.total_budget) > 0 && (() => {
+                      const totalBudgetVal = filteredTotalsForSummary ? filteredTotalsForSummary.budget : budgetByCategory.total_budget;
+                      const totalActual = filteredTotalsForSummary ? filteredTotalsForSummary.actual : budgetByCategory.total_actual;
                       const totalPctSpent = Math.min(100, (totalActual / totalBudgetVal) * 100);
                       const totalPctRemaining = Math.max(0, 100 - totalPctSpent);
                       const totalOver = totalActual > totalBudgetVal;
@@ -1634,7 +1633,7 @@ export default function Home() {
           </p>
           {transactions.length > 0 && (
             <p style={{ marginTop: '0.5rem', fontSize: '0.9rem' }}>
-              <button type="button" className="btn btn-secondary" onClick={() => { setSearchQuery(''); setQuickFilter(null); }}>
+              <button type="button" className="btn btn-secondary" onClick={() => { setSearchQuery(''); setQuickFilter(null); setUseDateRange(false); setUseAllTime(false); const [f, t] = monthRange(month); setDateFrom(f); setDateTo(t); }}>
                 Clear search & filters
               </button>
             </p>

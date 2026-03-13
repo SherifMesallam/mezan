@@ -384,6 +384,34 @@ textarea.input {
   grid-template-columns: repeat(3, 1fr);
 }
 
+.home-insights-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr));
+  gap: 0.5rem;
+}
+
+.home-insight-chip {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0.5rem 0.65rem;
+  background: #f8f9fa;
+  border-radius: 6px;
+  font-size: 0.85rem;
+}
+
+.home-insight-chip-label {
+  font-size: 0.7rem;
+  color: var(--mezan-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.home-insight-chip-value {
+  font-weight: 600;
+  line-height: 1.25;
+}
+
 .home-summary-card--predictions {
   min-width: 0;
 }
