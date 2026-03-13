@@ -308,8 +308,6 @@ export async function getLearningTransactionsForUser(userId: string, maxResults:
     where: {
       userId,
       date: { gte: dateFrom.toISOString().slice(0, 10) },
-      merchant: { not: null },
-      categoryId: { not: null },
       id: { notIn: [...manual, ...withTags, ...userConfirmed].map((t) => t.id) },
     },
     orderBy: { date: 'desc' },
@@ -319,10 +317,12 @@ export async function getLearningTransactionsForUser(userId: string, maxResults:
       tags: { include: { tag: { select: { name: true } } } },
     },
   });
+  type TxWithRelations = (typeof manual)[number];
+  const all: TxWithRelations[] = [...manual, ...withTags, ...userConfirmed, ...recentWithCategory];
   const seenId = new Set<string>();
   const seenMerchantCategory = new Set<string>();
   const out: LearningExample[] = [];
-  for (const t of [...manual, ...withTags, ...userConfirmed, ...recentWithCategory]) {
+  for (const t of all) {
     if (seenId.has(t.id)) continue;
     seenId.add(t.id);
     const category = t.category?.name?.trim() || '';
@@ -331,7 +331,7 @@ export async function getLearningTransactionsForUser(userId: string, maxResults:
     const key = `${(merchant ?? '').toLowerCase()}|${category.toLowerCase()}`;
     if (seenMerchantCategory.has(key)) continue;
     seenMerchantCategory.add(key);
-    const tags = (t.tags ?? []).map((tt) => tt.tag.name.trim()).filter(Boolean);
+    const tags = (t.tags ?? []).map((tt: { tag: { name: string } }) => tt.tag.name.trim()).filter(Boolean);
     out.push({ merchant, category, tags });
     if (out.length >= maxResults) break;
   }
