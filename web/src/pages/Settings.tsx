@@ -112,6 +112,9 @@ export default function Settings() {
             {ingestMessage}
           </p>
         )}
+        <p style={{ marginTop: '0.75rem', fontSize: '0.9rem' }}>
+          <Link to="/api-docs">API documentation</Link> — for integrations, mobile apps, and automation.
+        </p>
       </div>
       <div className="card" style={{ marginTop: '1rem' }}>
         <h2 style={{ fontSize: '1rem', margin: '0 0 0.5rem 0' }}>Export / Import data</h2>

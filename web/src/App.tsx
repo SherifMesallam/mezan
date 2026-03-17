@@ -14,6 +14,7 @@ import Settings from './pages/Settings';
 import SetupWizard from './pages/SetupWizard';
 import MergeFromSheet from './pages/MergeFromSheet';
 import AddFromImage from './pages/AddFromImage';
+import ApiDocs from './pages/ApiDocs';
 
 const TOKEN_KEY = 'mezan_token';
 const INGEST_TOKEN_KEY = 'mezan_ingest_token';
@@ -53,6 +54,7 @@ export default function App() {
   return (
     <Routes>
       <Route path="/login" element={token ? <Navigate to="/" replace /> : <Login onLogin={onLogin} />} />
+      <Route path="/api-docs" element={<ApiDocs />} />
       <Route path="/" element={token ? <Layout onLogout={onLogout} /> : <Navigate to="/login" replace />}>
         <Route index element={<Home />} />
         <Route path="add" element={<AddTransaction />} />

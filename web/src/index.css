@@ -41,6 +41,98 @@ body {
   min-height: 100vh;
 }
 
+/* API docs page (standalone, no sidebar) */
+.api-docs-page {
+  min-height: 100vh;
+  background: var(--mezan-main-bg);
+  padding: 1.5rem;
+}
+
+.api-docs {
+  max-width: 800px;
+  margin: 0 auto;
+}
+
+.api-docs-header {
+  margin-bottom: 2rem;
+}
+
+.api-docs-header h1 {
+  margin: 0 0 0.5rem;
+  font-size: 1.75rem;
+}
+
+.api-docs-subtitle {
+  margin: 0 0 0.75rem;
+  font-size: 1rem;
+  color: var(--mezan-text-muted);
+}
+
+.api-docs-section {
+  margin-bottom: 2rem;
+}
+
+.api-docs-section h2 {
+  font-size: 1.25rem;
+  margin: 0 0 0.75rem;
+  padding-bottom: 0.35rem;
+  border-bottom: 1px solid var(--mezan-border);
+}
+
+.api-docs-section h3 {
+  font-size: 1.05rem;
+  margin: 1.25rem 0 0.5rem;
+}
+
+.api-docs-section p {
+  margin: 0 0 0.5rem;
+  font-size: 0.95rem;
+  line-height: 1.5;
+}
+
+.api-docs-section pre {
+  background: var(--mezan-card-bg);
+  border: 1px solid var(--mezan-border);
+  border-radius: var(--mezan-radius);
+  padding: 0.75rem 1rem;
+  font-size: 0.85rem;
+  overflow-x: auto;
+  margin: 0.5rem 0 1rem;
+}
+
+.api-docs-section code {
+  font-family: ui-monospace, monospace;
+  font-size: 0.9em;
+  background: var(--mezan-main-bg);
+  padding: 0.15rem 0.35rem;
+  border-radius: 4px;
+}
+
+.api-docs-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+  margin: 0.5rem 0 1rem;
+}
+
+.api-docs-table th,
+.api-docs-table td {
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+  border-bottom: 1px solid var(--mezan-border);
+  vertical-align: top;
+}
+
+.api-docs-table th {
+  font-weight: 600;
+  color: var(--mezan-text-muted);
+}
+
+.api-docs-table code {
+  font-size: 0.85em;
+  white-space: nowrap;
+}
+
 #root {
   min-height: 100vh;
 }
@@ -2183,6 +2275,34 @@ textarea.input {
   margin: 0 0 0.75rem;
   font-size: 0.85rem;
   color: var(--mezan-text-muted);
+}
+
+/* Mobile: larger touch targets for step-by-step actions */
+@media (max-width: 480px) {
+  .sms-wizard-step-card .sms-action-btns {
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .sms-wizard-step-card .sms-action-btns .btn {
+    width: 100%;
+    min-height: 44px;
+    padding: 0.65rem 1rem;
+    font-size: 0.95rem;
+  }
+
+  .sms-wizard-step-card .sms-edit-fields {
+    grid-template-columns: 1fr;
+  }
+
+  .sms-wizard-step-card .sms-snippet {
+    max-width: 100%;
+  }
+
+  .sms-wizard-bar--step .btn {
+    min-height: 44px;
+    padding: 0.65rem 1rem;
+  }
 }
 
 .sms-wizard-error {
